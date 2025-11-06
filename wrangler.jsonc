@@ -9,7 +9,14 @@
 	"compatibility_date": "2025-11-05",
 	"observability": {
 		"enabled": true
-	}
+	},
+	"d1_databases": [
+		{
+			"binding": "todo_db",
+			"database_name": "todo-db",
+			"database_id": "f9c2f5eb-2f25-4d05-9642-d0431583519b"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
