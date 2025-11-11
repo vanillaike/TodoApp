@@ -38,6 +38,23 @@ interface RegisterResponse {
   refreshToken: string;
 }
 
+// Login request body
+interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+// Login response (same structure as registration)
+interface LoginResponse {
+  user: {
+    id: number;
+    email: string;
+    created_at: string;
+  };
+  accessToken: string;
+  refreshToken: string;
+}
+
 // Password validation result
 interface PasswordValidation {
   valid: boolean;
@@ -58,6 +75,17 @@ import * as jose from 'jose';
  */
 async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 10);
+}
+
+/**
+ * Verify a password against a bcrypt hash
+ * Uses timing-safe comparison via bcrypt.compare()
+ * @param password - Plain text password to verify
+ * @param hash - Bcrypt hash to compare against
+ * @returns Promise resolving to true if password matches, false otherwise
+ */
+async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(password, hash);
 }
 
 /**
@@ -282,6 +310,121 @@ export default {
           status: 201,
           headers: corsHeaders
         });
+      }
+
+      // POST /auth/login - User login endpoint
+      if (path === '/auth/login' && method === 'POST') {
+        // Validate Content-Type header
+        const contentType = request.headers.get('Content-Type');
+        if (!contentType || !contentType.includes('application/json')) {
+          return new Response(JSON.stringify({
+            error: 'Content-Type must be application/json'
+          }), {
+            status: 400,
+            headers: corsHeaders
+          });
+        }
+
+        // Parse request body
+        let body: LoginRequest;
+        try {
+          body = await request.json();
+        } catch (error) {
+          return new Response(JSON.stringify({
+            error: 'Invalid JSON in request body'
+          }), {
+            status: 400,
+            headers: corsHeaders
+          });
+        }
+
+        // Validate required fields
+        if (!body.email || !body.password) {
+          return new Response(JSON.stringify({
+            error: 'Email and password are required'
+          }), {
+            status: 400,
+            headers: corsHeaders
+          });
+        }
+
+        try {
+          // Query database for user by email (case-insensitive)
+          // Note: We need to fetch password_hash for verification
+          const user = await env.todo_db.prepare(
+            'SELECT id, email, password_hash, created_at FROM users WHERE LOWER(email) = LOWER(?)'
+          )
+            .bind(body.email)
+            .first() as { id: number; email: string; password_hash: string; created_at: string } | null;
+
+          // If user doesn't exist, return generic error (prevent email enumeration)
+          if (!user) {
+            console.log(`Login failed: User not found for email ${body.email}`);
+            return new Response(JSON.stringify({
+              error: 'Invalid credentials'
+            }), {
+              status: 401,
+              headers: corsHeaders
+            });
+          }
+
+          // Verify password using bcrypt comparison (timing-safe)
+          const isValidPassword = await verifyPassword(body.password, user.password_hash);
+
+          // If password is incorrect, return generic error
+          if (!isValidPassword) {
+            console.log(`Login failed: Invalid password for user ID ${user.id}`);
+            return new Response(JSON.stringify({
+              error: 'Invalid credentials'
+            }), {
+              status: 401,
+              headers: corsHeaders
+            });
+          }
+
+          // Authentication successful - generate tokens
+          const accessToken = await generateAccessToken(user.id, user.email, env);
+          const refreshToken = generateRefreshToken();
+
+          // Calculate refresh token expiration (30 days from now)
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+          const expiresAtISO = expiresAt.toISOString();
+
+          // Store refresh token in database
+          await env.todo_db.prepare(
+            'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)'
+          )
+            .bind(user.id, refreshToken, expiresAtISO)
+            .run();
+
+          // Prepare response (exclude password_hash)
+          const response: LoginResponse = {
+            user: {
+              id: user.id,
+              email: user.email,
+              created_at: user.created_at
+            },
+            accessToken,
+            refreshToken
+          };
+
+          console.log(`Login successful for user ID ${user.id}`);
+
+          return new Response(JSON.stringify(response), {
+            status: 200,
+            headers: corsHeaders
+          });
+
+        } catch (error) {
+          // Log error details server-side but don't expose to client
+          console.error('Login error:', error);
+          return new Response(JSON.stringify({
+            error: 'Internal server error during login'
+          }), {
+            status: 500,
+            headers: corsHeaders
+          });
+        }
       }
 
       // ========================================================================
