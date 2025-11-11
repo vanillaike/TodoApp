@@ -16,7 +16,7 @@
 			"database_name": "todo-db",
 			"database_id": "f9c2f5eb-2f25-4d05-9642-d0431583519b"
 		}
-	]
+	],
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
@@ -32,10 +32,13 @@
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
-	// "vars": { "MY_VARIABLE": "production_value" }
+	"vars": {
+		"JWT_SECRET": "dev-secret-change-in-production-use-wrangler-secret-put-JWT_SECRET"
+	}
 	/**
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
+	 * For production, use: wrangler secret put JWT_SECRET
 	 */
 	/**
 	 * Static Assets
