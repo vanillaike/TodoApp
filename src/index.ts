@@ -61,6 +61,12 @@ interface PasswordValidation {
   error?: string;
 }
 
+// Authenticated user info extracted from JWT
+interface AuthenticatedUser {
+  userId: number;
+  email: string;
+}
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
@@ -163,6 +169,99 @@ function generateRefreshToken(): string {
   return crypto.randomUUID();
 }
 
+/**
+ * Verify a JWT access token and return user information
+ * Checks token signature, expiration, and blacklist status
+ * @param token - JWT access token to verify
+ * @param env - Environment bindings (contains JWT_SECRET and todo_db)
+ * @returns User info { userId, email } if valid, null if invalid/expired/blacklisted
+ */
+async function verifyAccessToken(token: string, env: Env): Promise<{ userId: number; email: string } | null> {
+  try {
+    // Convert JWT_SECRET string to Uint8Array for jose library
+    const secret = new TextEncoder().encode(env.JWT_SECRET);
+
+    // Verify token signature and expiration using jose library
+    const { payload } = await jose.jwtVerify(token, secret);
+
+    // Check if token has been blacklisted (user logged out)
+    const blacklisted = await env.todo_db.prepare(
+      'SELECT 1 FROM token_blacklist WHERE token = ?'
+    ).bind(token).first();
+
+    if (blacklisted) {
+      console.log('Token verification failed: Token is blacklisted');
+      return null;
+    }
+
+    // Extract and return user information from JWT payload
+    return {
+      userId: payload.userId as number,
+      email: payload.email as string
+    };
+  } catch (error) {
+    // Token is invalid, expired, or malformed
+    console.log('Token verification failed:', error instanceof Error ? error.message : 'Unknown error');
+    return null;
+  }
+}
+
+/**
+ * Authentication middleware - extracts and verifies JWT from Authorization header
+ * Returns user info if valid, or 401 Response if authentication fails
+ * @param request - The incoming HTTP request
+ * @param env - Environment bindings
+ * @returns User info { userId, email } or 401 Response with error message
+ */
+async function authenticate(request: Request, env: Env): Promise<AuthenticatedUser | Response> {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Content-Type': 'application/json',
+  };
+
+  // Extract Authorization header
+  const authHeader = request.headers.get('Authorization');
+
+  if (!authHeader) {
+    return new Response(JSON.stringify({
+      error: 'Authorization header required'
+    }), {
+      status: 401,
+      headers: corsHeaders
+    });
+  }
+
+  // Check if header starts with "Bearer "
+  if (!authHeader.startsWith('Bearer ')) {
+    return new Response(JSON.stringify({
+      error: 'Invalid authorization format. Use: Bearer <token>'
+    }), {
+      status: 401,
+      headers: corsHeaders
+    });
+  }
+
+  // Extract token from "Bearer <token>"
+  const token = authHeader.substring(7); // Remove "Bearer " prefix
+
+  // Verify the token
+  const userInfo = await verifyAccessToken(token, env);
+
+  if (!userInfo) {
+    return new Response(JSON.stringify({
+      error: 'Invalid or expired token'
+    }), {
+      status: 401,
+      headers: corsHeaders
+    });
+  }
+
+  // Return authenticated user info
+  return userInfo;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -172,7 +271,7 @@ export default {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Content-Type': 'application/json',
     };
 
@@ -428,17 +527,35 @@ export default {
       }
 
       // ========================================================================
-      // TODO ROUTES
+      // TODO ROUTES (All protected by JWT authentication)
       // ========================================================================
 
-      // GET /todos - List all todos
+      // GET /todos - List all todos for authenticated user
       if (path === '/todos' && method === 'GET') {
-        const { results } = await env.todo_db.prepare('SELECT * FROM todos ORDER BY created_at DESC').all();
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
+        // Query todos filtered by user_id to ensure user isolation
+        const { results } = await env.todo_db.prepare(
+          'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC'
+        ).bind(user.userId).all();
+
         return new Response(JSON.stringify(results), { headers: corsHeaders });
       }
 
-      // POST /todos - Create a new todo
+      // POST /todos - Create a new todo for authenticated user
       if (path === '/todos' && method === 'POST') {
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
         const body: Partial<Todo> = await request.json();
 
         if (!body.title || body.title.trim() === '') {
@@ -448,12 +565,14 @@ export default {
           });
         }
 
+        // Insert todo with user_id to associate with authenticated user
         const result = await env.todo_db.prepare(
-          'INSERT INTO todos (title, description, completed) VALUES (?, ?, ?)'
+          'INSERT INTO todos (title, description, completed, user_id) VALUES (?, ?, ?, ?)'
         )
-          .bind(body.title, body.description || null, body.completed || 0)
+          .bind(body.title, body.description || null, body.completed || 0, user.userId)
           .run();
 
+        // Fetch the created todo
         const todo = await env.todo_db.prepare('SELECT * FROM todos WHERE id = ?')
           .bind(result.meta.last_row_id)
           .first();
@@ -464,12 +583,24 @@ export default {
         });
       }
 
-      // GET /todos/:id - Get a specific todo
+      // GET /todos/:id - Get a specific todo for authenticated user
       const getTodoMatch = path.match(/^\/todos\/(\d+)$/);
       if (getTodoMatch && method === 'GET') {
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
         const id = getTodoMatch[1];
-        const todo = await env.todo_db.prepare('SELECT * FROM todos WHERE id = ?')
-          .bind(id)
+
+        // Query todo with both id and user_id to ensure user isolation
+        // Returns 404 if todo doesn't exist OR doesn't belong to user (don't reveal existence)
+        const todo = await env.todo_db.prepare(
+          'SELECT * FROM todos WHERE id = ? AND user_id = ?'
+        )
+          .bind(id, user.userId)
           .first();
 
         if (!todo) {
@@ -482,15 +613,25 @@ export default {
         return new Response(JSON.stringify(todo), { headers: corsHeaders });
       }
 
-      // PUT /todos/:id - Update a todo
+      // PUT /todos/:id - Update a todo for authenticated user
       const putTodoMatch = path.match(/^\/todos\/(\d+)$/);
       if (putTodoMatch && method === 'PUT') {
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
         const id = putTodoMatch[1];
         const body: Partial<Todo> = await request.json();
 
-        // Check if todo exists
-        const existing = await env.todo_db.prepare('SELECT * FROM todos WHERE id = ?')
-          .bind(id)
+        // Check if todo exists AND belongs to user (user isolation)
+        // Returns 404 if todo doesn't exist OR doesn't belong to user (don't reveal existence)
+        const existing = await env.todo_db.prepare(
+          'SELECT * FROM todos WHERE id = ? AND user_id = ?'
+        )
+          .bind(id, user.userId)
           .first();
 
         if (!existing) {
@@ -500,31 +641,47 @@ export default {
           });
         }
 
+        // Update todo with user_id filter to ensure user isolation
         await env.todo_db.prepare(
-          'UPDATE todos SET title = ?, description = ?, completed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          'UPDATE todos SET title = ?, description = ?, completed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?'
         )
           .bind(
             body.title !== undefined ? body.title : existing.title,
             body.description !== undefined ? body.description : existing.description,
             body.completed !== undefined ? body.completed : existing.completed,
-            id
+            id,
+            user.userId
           )
           .run();
 
-        const updated = await env.todo_db.prepare('SELECT * FROM todos WHERE id = ?')
-          .bind(id)
+        // Fetch updated todo with user_id filter
+        const updated = await env.todo_db.prepare(
+          'SELECT * FROM todos WHERE id = ? AND user_id = ?'
+        )
+          .bind(id, user.userId)
           .first();
 
         return new Response(JSON.stringify(updated), { headers: corsHeaders });
       }
 
-      // DELETE /todos/:id - Delete a todo
+      // DELETE /todos/:id - Delete a todo for authenticated user
       const deleteTodoMatch = path.match(/^\/todos\/(\d+)$/);
       if (deleteTodoMatch && method === 'DELETE') {
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
         const id = deleteTodoMatch[1];
 
-        const existing = await env.todo_db.prepare('SELECT * FROM todos WHERE id = ?')
-          .bind(id)
+        // Check if todo exists AND belongs to user (user isolation)
+        // Returns 404 if todo doesn't exist OR doesn't belong to user (don't reveal existence)
+        const existing = await env.todo_db.prepare(
+          'SELECT * FROM todos WHERE id = ? AND user_id = ?'
+        )
+          .bind(id, user.userId)
           .first();
 
         if (!existing) {
@@ -534,8 +691,9 @@ export default {
           });
         }
 
-        await env.todo_db.prepare('DELETE FROM todos WHERE id = ?')
-          .bind(id)
+        // Delete todo with user_id filter to ensure user isolation
+        await env.todo_db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?')
+          .bind(id, user.userId)
           .run();
 
         return new Response(JSON.stringify({ message: 'Todo deleted successfully' }), {
