@@ -172,6 +172,12 @@ function generateRefreshToken(): string {
 /**
  * Verify a JWT access token and return user information
  * Checks token signature, expiration, and blacklist status
+ *
+ * TODO: Implement periodic cleanup of expired tokens from token_blacklist table.
+ * This can be done via a Cloudflare scheduled worker or cron trigger:
+ * DELETE FROM token_blacklist WHERE expires_at < CURRENT_TIMESTAMP
+ * Recommended frequency: daily or weekly depending on logout volume
+ *
  * @param token - JWT access token to verify
  * @param env - Environment bindings (contains JWT_SECRET and todo_db)
  * @returns User info { userId, email } if valid, null if invalid/expired/blacklisted
@@ -519,6 +525,193 @@ export default {
           console.error('Login error:', error);
           return new Response(JSON.stringify({
             error: 'Internal server error during login'
+          }), {
+            status: 500,
+            headers: corsHeaders
+          });
+        }
+      }
+
+      // POST /auth/logout - Logout endpoint with token blacklist
+      if (path === '/auth/logout' && method === 'POST') {
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
+        // Extract the access token from Authorization header
+        const authHeader = request.headers.get('Authorization');
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          return new Response(JSON.stringify({
+            error: 'Token extraction failed'
+          }), {
+            status: 500,
+            headers: corsHeaders
+          });
+        }
+        const token = authHeader.substring(7); // Remove "Bearer " prefix
+
+        try {
+          // Get token expiration from JWT payload to store in blacklist
+          const secret = new TextEncoder().encode(env.JWT_SECRET);
+          const { payload } = await jose.jwtVerify(token, secret);
+
+          // Convert Unix timestamp (seconds) to ISO date string for D1
+          const expiresAt = new Date((payload.exp as number) * 1000).toISOString();
+
+          // Add access token to blacklist table
+          // This will be checked by verifyAccessToken() on all authenticated requests
+          await env.todo_db.prepare(
+            'INSERT INTO token_blacklist (token, expires_at) VALUES (?, ?)'
+          ).bind(token, expiresAt).run();
+
+          // Parse request body to check for optional refresh token
+          let body: { refreshToken?: string } = {};
+          try {
+            const parsedBody = await request.json().catch(() => ({}));
+            body = parsedBody as { refreshToken?: string };
+          } catch {
+            // Body is optional, ignore parse errors
+          }
+
+          // If refresh token is provided, delete it from database
+          // Only delete if it belongs to the authenticated user (security measure)
+          if (body.refreshToken) {
+            await env.todo_db.prepare(
+              'DELETE FROM refresh_tokens WHERE token = ? AND user_id = ?'
+            ).bind(body.refreshToken, user.userId).run();
+
+            console.log(`User ${user.userId} logged out - access token blacklisted, refresh token deleted`);
+          } else {
+            console.log(`User ${user.userId} logged out - access token blacklisted`);
+          }
+
+          return new Response(JSON.stringify({
+            message: 'Logged out successfully'
+          }), {
+            status: 200,
+            headers: corsHeaders
+          });
+
+        } catch (error) {
+          console.error('Logout error:', error);
+          return new Response(JSON.stringify({
+            error: 'Internal server error during logout'
+          }), {
+            status: 500,
+            headers: corsHeaders
+          });
+        }
+      }
+
+      // POST /auth/refresh - Refresh token endpoint to get new access token
+      if (path === '/auth/refresh' && method === 'POST') {
+        // Validate Content-Type header
+        const contentType = request.headers.get('Content-Type');
+        if (!contentType || !contentType.includes('application/json')) {
+          return new Response(JSON.stringify({
+            error: 'Content-Type must be application/json'
+          }), {
+            status: 400,
+            headers: corsHeaders
+          });
+        }
+
+        // Parse request body
+        let body: { refreshToken?: string };
+        try {
+          body = await request.json();
+        } catch (error) {
+          return new Response(JSON.stringify({
+            error: 'Invalid JSON in request body'
+          }), {
+            status: 400,
+            headers: corsHeaders
+          });
+        }
+
+        // Validate refresh token is provided
+        if (!body.refreshToken) {
+          return new Response(JSON.stringify({
+            error: 'Refresh token is required'
+          }), {
+            status: 400,
+            headers: corsHeaders
+          });
+        }
+
+        try {
+          // Look up refresh token in database
+          const tokenRecord = await env.todo_db.prepare(
+            'SELECT user_id, expires_at FROM refresh_tokens WHERE token = ?'
+          ).bind(body.refreshToken).first() as { user_id: number; expires_at: string } | null;
+
+          // Check if token exists
+          if (!tokenRecord) {
+            console.log('Refresh token not found');
+            return new Response(JSON.stringify({
+              error: 'Invalid refresh token'
+            }), {
+              status: 401,
+              headers: corsHeaders
+            });
+          }
+
+          // Check if token has expired
+          const expiresAt = new Date(tokenRecord.expires_at);
+          if (expiresAt < new Date()) {
+            // Token expired - delete it from database
+            await env.todo_db.prepare(
+              'DELETE FROM refresh_tokens WHERE token = ?'
+            ).bind(body.refreshToken).run();
+
+            console.log('Refresh token expired and deleted');
+            return new Response(JSON.stringify({
+              error: 'Refresh token expired'
+            }), {
+              status: 401,
+              headers: corsHeaders
+            });
+          }
+
+          // Fetch user information to generate new access token
+          const user = await env.todo_db.prepare(
+            'SELECT id, email FROM users WHERE id = ?'
+          ).bind(tokenRecord.user_id).first() as { id: number; email: string } | null;
+
+          if (!user) {
+            // User doesn't exist (shouldn't happen, but handle gracefully)
+            console.log('User not found for refresh token');
+            return new Response(JSON.stringify({
+              error: 'Invalid refresh token'
+            }), {
+              status: 401,
+              headers: corsHeaders
+            });
+          }
+
+          // Generate new access token for the user
+          const accessToken = await generateAccessToken(user.id, user.email, env);
+
+          // Optional: Implement refresh token rotation for enhanced security
+          // This would delete the old refresh token and create a new one
+          // For now, we'll keep the existing refresh token (simpler approach)
+
+          console.log(`New access token generated for user ${user.id}`);
+
+          return new Response(JSON.stringify({
+            accessToken
+          }), {
+            status: 200,
+            headers: corsHeaders
+          });
+
+        } catch (error) {
+          console.error('Refresh token error:', error);
+          return new Response(JSON.stringify({
+            error: 'Internal server error during token refresh'
           }), {
             status: 500,
             headers: corsHeaders
