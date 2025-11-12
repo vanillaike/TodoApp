@@ -67,6 +67,13 @@ interface AuthenticatedUser {
   email: string;
 }
 
+// Generic validation result interface for input validation
+interface ValidationResult<T = any> {
+  valid: boolean;
+  error?: string;
+  data?: T;
+}
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
@@ -95,18 +102,67 @@ async function verifyPassword(password: string, hash: string): Promise<boolean> 
 }
 
 /**
- * Validate email format using regex
- * @param email - Email address to validate
- * @returns true if email format is valid
+ * Validate Content-Type header for JSON requests
+ * Ensures request has application/json content type
+ * @param request - The incoming HTTP request
+ * @returns true if Content-Type includes application/json, false otherwise
  */
-function validateEmail(email: string): boolean {
-  // Standard email regex pattern
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+function validateContentType(request: Request): boolean {
+  const contentType = request.headers.get('Content-Type');
+  return contentType?.includes('application/json') || false;
 }
 
 /**
- * Validate password strength requirements
+ * Check if request body size is within acceptable limits
+ * Prevents denial-of-service attacks from oversized payloads
+ * @param request - The incoming HTTP request
+ * @param maxSizeBytes - Maximum allowed size in bytes (default: 10240 = 10KB)
+ * @returns true if size is acceptable, false if too large
+ */
+function checkRequestSize(request: Request, maxSizeBytes: number = 10240): boolean {
+  const contentLength = request.headers.get('Content-Length');
+  if (contentLength) {
+    const size = parseInt(contentLength);
+    return size <= maxSizeBytes;
+  }
+  // If no Content-Length header, allow the request (will be caught during JSON parsing if too large)
+  return true;
+}
+
+/**
+ * Validate email format using enhanced regex and length constraints
+ * Performs normalization checks and validates RFC-compliant email structure
+ * @param email - Email address to validate
+ * @returns true if email format is valid, false otherwise
+ */
+function validateEmail(email: string): boolean {
+  // Check email length (max 255 chars per RFC standards)
+  if (!email || email.length === 0 || email.length > 255) {
+    return false;
+  }
+
+  // More robust email regex pattern
+  // Validates: local-part@domain.tld structure
+  // Allows alphanumeric, dots, hyphens, underscores, plus signs
+  const emailRegex = /^[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+  if (!emailRegex.test(email)) {
+    return false;
+  }
+
+  // Additional validation: check for consecutive dots or dots at start/end of local part
+  const localPart = email.split('@')[0];
+  if (localPart.startsWith('.') || localPart.endsWith('.') || localPart.includes('..')) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validate password strength requirements with length constraints
+ * Enforces minimum 8 chars, at least 1 letter and 1 number
+ * Maximum 128 chars to prevent DoS attacks
  * @param password - Password to validate
  * @returns Object with valid boolean and optional error message
  */
@@ -115,6 +171,14 @@ function validatePassword(password: string): PasswordValidation {
     return {
       valid: false,
       error: 'Password must be at least 8 characters long'
+    };
+  }
+
+  // Enforce maximum length to prevent denial-of-service via bcrypt
+  if (password.length > 128) {
+    return {
+      valid: false,
+      error: 'Password must be 128 characters or less'
     };
   }
 
@@ -135,6 +199,224 @@ function validatePassword(password: string): PasswordValidation {
   }
 
   return { valid: true };
+}
+
+/**
+ * Comprehensive validation for registration input
+ * Validates email and password with type checking, length limits, and unknown field rejection
+ * @param body - Request body to validate (should contain email and password)
+ * @returns ValidationResult with validated data or error message
+ */
+function validateRegisterInput(body: any): ValidationResult<{ email: string; password: string }> {
+  // Check body is a valid object (not array, null, etc.)
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+
+  // Check for unknown fields (security: reject extra fields to prevent injection)
+  const allowedFields = ['email', 'password'];
+  const providedFields = Object.keys(body);
+  const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
+  if (unknownFields.length > 0) {
+    return {
+      valid: false,
+      error: `Unknown fields: ${unknownFields.join(', ')}. Only email and password are allowed.`
+    };
+  }
+
+  // Validate email is provided and is a string
+  if (!body.email || typeof body.email !== 'string') {
+    return { valid: false, error: 'Email is required and must be a string' };
+  }
+
+  // Normalize email: trim whitespace and convert to lowercase
+  const email = body.email.trim().toLowerCase();
+
+  // Check email is not empty after trimming
+  if (email.length === 0) {
+    return { valid: false, error: 'Email cannot be empty' };
+  }
+
+  // Check email length (max 255 characters per RFC standards)
+  if (email.length > 255) {
+    return { valid: false, error: 'Email must be 255 characters or less' };
+  }
+
+  // Validate email format using enhanced validation
+  if (!validateEmail(email)) {
+    return { valid: false, error: 'Invalid email format' };
+  }
+
+  // Validate password is provided and is a string
+  if (!body.password || typeof body.password !== 'string') {
+    return { valid: false, error: 'Password is required and must be a string' };
+  }
+
+  const password = body.password;
+
+  // Validate password strength (includes length, letter, number checks)
+  const passwordValidation = validatePassword(password);
+  if (!passwordValidation.valid) {
+    return { valid: false, error: passwordValidation.error };
+  }
+
+  // All validation passed - return normalized data
+  return {
+    valid: true,
+    data: { email, password }
+  };
+}
+
+/**
+ * Comprehensive validation for login input
+ * Validates email and password presence with type checking and unknown field rejection
+ * @param body - Request body to validate (should contain email and password)
+ * @returns ValidationResult with validated data or error message
+ */
+function validateLoginInput(body: any): ValidationResult<{ email: string; password: string }> {
+  // Check body is a valid object (not array, null, etc.)
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+
+  // Check for unknown fields (security: reject extra fields)
+  const allowedFields = ['email', 'password'];
+  const providedFields = Object.keys(body);
+  const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
+  if (unknownFields.length > 0) {
+    return {
+      valid: false,
+      error: `Unknown fields: ${unknownFields.join(', ')}. Only email and password are allowed.`
+    };
+  }
+
+  // Validate email is provided and is a string
+  if (!body.email || typeof body.email !== 'string') {
+    return { valid: false, error: 'Email is required and must be a string' };
+  }
+
+  // Normalize email: trim whitespace and convert to lowercase
+  const email = body.email.trim().toLowerCase();
+
+  // Check email is not empty after trimming
+  if (email.length === 0) {
+    return { valid: false, error: 'Email cannot be empty' };
+  }
+
+  // Validate password is provided and is a string
+  // Note: We don't validate password format for login (only check it exists)
+  // This prevents revealing whether the issue is email or password
+  if (!body.password || typeof body.password !== 'string') {
+    return { valid: false, error: 'Password is required and must be a string' };
+  }
+
+  const password = body.password;
+
+  // Check password is not empty
+  if (password.length === 0) {
+    return { valid: false, error: 'Password cannot be empty' };
+  }
+
+  // All validation passed - return normalized data
+  return {
+    valid: true,
+    data: { email, password }
+  };
+}
+
+/**
+ * Comprehensive validation for logout input
+ * Validates optional refreshToken field with type checking and unknown field rejection
+ * @param body - Request body to validate (may contain optional refreshToken)
+ * @returns ValidationResult with validated data or error message
+ */
+function validateLogoutInput(body: any): ValidationResult<{ refreshToken?: string }> {
+  // Body is optional for logout - if not provided or empty, that's valid
+  if (!body || (typeof body === 'object' && Object.keys(body).length === 0)) {
+    return { valid: true, data: {} };
+  }
+
+  // Check body is a valid object (not array, null, etc.)
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+
+  // Check for unknown fields (security: only allow refreshToken)
+  const allowedFields = ['refreshToken'];
+  const providedFields = Object.keys(body);
+  const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
+  if (unknownFields.length > 0) {
+    return {
+      valid: false,
+      error: `Unknown fields: ${unknownFields.join(', ')}. Only refreshToken is allowed.`
+    };
+  }
+
+  // If refreshToken is provided, validate it's a string
+  if (body.refreshToken !== undefined) {
+    if (typeof body.refreshToken !== 'string') {
+      return { valid: false, error: 'refreshToken must be a string' };
+    }
+
+    if (body.refreshToken.trim().length === 0) {
+      return { valid: false, error: 'refreshToken cannot be empty' };
+    }
+  }
+
+  // All validation passed
+  return {
+    valid: true,
+    data: body.refreshToken ? { refreshToken: body.refreshToken } : {}
+  };
+}
+
+/**
+ * Comprehensive validation for refresh token input
+ * Validates required refreshToken with UUID format checking and unknown field rejection
+ * @param body - Request body to validate (must contain refreshToken)
+ * @returns ValidationResult with validated data or error message
+ */
+function validateRefreshInput(body: any): ValidationResult<{ refreshToken: string }> {
+  // Check body is a valid object (not array, null, etc.)
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+
+  // Check for unknown fields (security: only allow refreshToken)
+  const allowedFields = ['refreshToken'];
+  const providedFields = Object.keys(body);
+  const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
+  if (unknownFields.length > 0) {
+    return {
+      valid: false,
+      error: `Unknown fields: ${unknownFields.join(', ')}. Only refreshToken is allowed.`
+    };
+  }
+
+  // Validate refreshToken is provided and is a string
+  if (!body.refreshToken || typeof body.refreshToken !== 'string') {
+    return { valid: false, error: 'refreshToken is required and must be a string' };
+  }
+
+  const refreshToken = body.refreshToken.trim();
+
+  // Check refreshToken is not empty after trimming
+  if (refreshToken.length === 0) {
+    return { valid: false, error: 'refreshToken cannot be empty' };
+  }
+
+  // Validate UUID format (since we use crypto.randomUUID())
+  // UUID v4 format: 8-4-4-4-12 hexadecimal characters
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(refreshToken)) {
+    return { valid: false, error: 'refreshToken must be a valid UUID format' };
+  }
+
+  // All validation passed
+  return {
+    valid: true,
+    data: { refreshToken }
+  };
 }
 
 /**
@@ -292,66 +574,62 @@ export default {
 
       // POST /auth/register - User registration endpoint
       if (path === '/auth/register' && method === 'POST') {
-        // Validate Content-Type header
-        const contentType = request.headers.get('Content-Type');
-        if (!contentType || !contentType.includes('application/json')) {
+        // Validate Content-Type header (return 415 for wrong content type)
+        if (!validateContentType(request)) {
           return new Response(JSON.stringify({
-            error: 'Content-Type must be application/json'
+            error: 'Unsupported Media Type',
+            message: 'Content-Type must be application/json'
           }), {
-            status: 400,
+            status: 415,
+            headers: corsHeaders
+          });
+        }
+
+        // Check request size to prevent DoS attacks
+        if (!checkRequestSize(request)) {
+          return new Response(JSON.stringify({
+            error: 'Payload Too Large',
+            message: 'Request body must be 10KB or less'
+          }), {
+            status: 413,
             headers: corsHeaders
           });
         }
 
         // Parse request body
-        let body: RegisterRequest;
+        let body: any;
         try {
           body = await request.json();
         } catch (error) {
           return new Response(JSON.stringify({
-            error: 'Invalid JSON in request body'
+            error: 'Invalid JSON',
+            message: 'Request body must be valid JSON'
           }), {
             status: 400,
             headers: corsHeaders
           });
         }
 
-        // Validate required fields
-        if (!body.email || !body.password) {
+        // Comprehensive input validation
+        const validation = validateRegisterInput(body);
+        if (!validation.valid) {
           return new Response(JSON.stringify({
-            error: 'Email and password are required'
+            error: 'Validation failed',
+            message: validation.error
           }), {
             status: 400,
             headers: corsHeaders
           });
         }
 
-        // Validate email format
-        if (!validateEmail(body.email)) {
-          return new Response(JSON.stringify({
-            error: 'Invalid email format'
-          }), {
-            status: 400,
-            headers: corsHeaders
-          });
-        }
-
-        // Validate password strength
-        const passwordValidation = validatePassword(body.password);
-        if (!passwordValidation.valid) {
-          return new Response(JSON.stringify({
-            error: passwordValidation.error
-          }), {
-            status: 400,
-            headers: corsHeaders
-          });
-        }
+        // Extract validated and normalized data
+        const { email, password } = validation.data!;
 
         // Check if email already exists
         const existingUser = await env.todo_db.prepare(
           'SELECT id FROM users WHERE email = ?'
         )
-          .bind(body.email.toLowerCase())
+          .bind(email)
           .first();
 
         if (existingUser) {
@@ -364,13 +642,13 @@ export default {
         }
 
         // Hash password
-        const passwordHash = await hashPassword(body.password);
+        const passwordHash = await hashPassword(password);
 
         // Insert user into database
         const userResult = await env.todo_db.prepare(
           'INSERT INTO users (email, password_hash) VALUES (?, ?)'
         )
-          .bind(body.email.toLowerCase(), passwordHash)
+          .bind(email, passwordHash)
           .run();
 
         const userId = userResult.meta.last_row_id as number;
@@ -419,52 +697,69 @@ export default {
 
       // POST /auth/login - User login endpoint
       if (path === '/auth/login' && method === 'POST') {
-        // Validate Content-Type header
-        const contentType = request.headers.get('Content-Type');
-        if (!contentType || !contentType.includes('application/json')) {
+        // Validate Content-Type header (return 415 for wrong content type)
+        if (!validateContentType(request)) {
           return new Response(JSON.stringify({
-            error: 'Content-Type must be application/json'
+            error: 'Unsupported Media Type',
+            message: 'Content-Type must be application/json'
           }), {
-            status: 400,
+            status: 415,
+            headers: corsHeaders
+          });
+        }
+
+        // Check request size to prevent DoS attacks
+        if (!checkRequestSize(request)) {
+          return new Response(JSON.stringify({
+            error: 'Payload Too Large',
+            message: 'Request body must be 10KB or less'
+          }), {
+            status: 413,
             headers: corsHeaders
           });
         }
 
         // Parse request body
-        let body: LoginRequest;
+        let body: any;
         try {
           body = await request.json();
         } catch (error) {
           return new Response(JSON.stringify({
-            error: 'Invalid JSON in request body'
+            error: 'Invalid JSON',
+            message: 'Request body must be valid JSON'
           }), {
             status: 400,
             headers: corsHeaders
           });
         }
 
-        // Validate required fields
-        if (!body.email || !body.password) {
+        // Comprehensive input validation
+        const validation = validateLoginInput(body);
+        if (!validation.valid) {
           return new Response(JSON.stringify({
-            error: 'Email and password are required'
+            error: 'Validation failed',
+            message: validation.error
           }), {
             status: 400,
             headers: corsHeaders
           });
         }
+
+        // Extract validated and normalized data
+        const { email, password } = validation.data!;
 
         try {
-          // Query database for user by email (case-insensitive)
+          // Query database for user by email (already normalized to lowercase)
           // Note: We need to fetch password_hash for verification
           const user = await env.todo_db.prepare(
-            'SELECT id, email, password_hash, created_at FROM users WHERE LOWER(email) = LOWER(?)'
+            'SELECT id, email, password_hash, created_at FROM users WHERE email = ?'
           )
-            .bind(body.email)
+            .bind(email)
             .first() as { id: number; email: string; password_hash: string; created_at: string } | null;
 
           // If user doesn't exist, return generic error (prevent email enumeration)
           if (!user) {
-            console.log(`Login failed: User not found for email ${body.email}`);
+            console.log(`Login failed: User not found for email ${email}`);
             return new Response(JSON.stringify({
               error: 'Invalid credentials'
             }), {
@@ -474,7 +769,7 @@ export default {
           }
 
           // Verify password using bcrypt comparison (timing-safe)
-          const isValidPassword = await verifyPassword(body.password, user.password_hash);
+          const isValidPassword = await verifyPassword(password, user.password_hash);
 
           // If password is incorrect, return generic error
           if (!isValidPassword) {
@@ -568,20 +863,41 @@ export default {
           ).bind(token, expiresAt).run();
 
           // Parse request body to check for optional refresh token
-          let body: { refreshToken?: string } = {};
+          // Body is optional for logout, handle gracefully
+          let body: any = {};
           try {
-            const parsedBody = await request.json().catch(() => ({}));
-            body = parsedBody as { refreshToken?: string };
+            // Content-Type validation is optional for logout since body is optional
+            const contentType = request.headers.get('Content-Type');
+            if (contentType && contentType.includes('application/json')) {
+              body = await request.json().catch(() => ({}));
+            }
           } catch {
             // Body is optional, ignore parse errors
+            body = {};
+          }
+
+          // Validate logout input if body exists
+          let validatedData: { refreshToken?: string } = {};
+          if (body && Object.keys(body).length > 0) {
+            const validation = validateLogoutInput(body);
+            if (!validation.valid) {
+              return new Response(JSON.stringify({
+                error: 'Validation failed',
+                message: validation.error
+              }), {
+                status: 400,
+                headers: corsHeaders
+              });
+            }
+            validatedData = validation.data || {};
           }
 
           // If refresh token is provided, delete it from database
           // Only delete if it belongs to the authenticated user (security measure)
-          if (body.refreshToken) {
+          if (validatedData.refreshToken) {
             await env.todo_db.prepare(
               'DELETE FROM refresh_tokens WHERE token = ? AND user_id = ?'
-            ).bind(body.refreshToken, user.userId).run();
+            ).bind(validatedData.refreshToken, user.userId).run();
 
             console.log(`User ${user.userId} logged out - access token blacklisted, refresh token deleted`);
           } else {
@@ -608,45 +924,62 @@ export default {
 
       // POST /auth/refresh - Refresh token endpoint to get new access token
       if (path === '/auth/refresh' && method === 'POST') {
-        // Validate Content-Type header
-        const contentType = request.headers.get('Content-Type');
-        if (!contentType || !contentType.includes('application/json')) {
+        // Validate Content-Type header (return 415 for wrong content type)
+        if (!validateContentType(request)) {
           return new Response(JSON.stringify({
-            error: 'Content-Type must be application/json'
+            error: 'Unsupported Media Type',
+            message: 'Content-Type must be application/json'
           }), {
-            status: 400,
+            status: 415,
+            headers: corsHeaders
+          });
+        }
+
+        // Check request size to prevent DoS attacks
+        if (!checkRequestSize(request)) {
+          return new Response(JSON.stringify({
+            error: 'Payload Too Large',
+            message: 'Request body must be 10KB or less'
+          }), {
+            status: 413,
             headers: corsHeaders
           });
         }
 
         // Parse request body
-        let body: { refreshToken?: string };
+        let body: any;
         try {
           body = await request.json();
         } catch (error) {
           return new Response(JSON.stringify({
-            error: 'Invalid JSON in request body'
+            error: 'Invalid JSON',
+            message: 'Request body must be valid JSON'
           }), {
             status: 400,
             headers: corsHeaders
           });
         }
 
-        // Validate refresh token is provided
-        if (!body.refreshToken) {
+        // Comprehensive input validation
+        const validation = validateRefreshInput(body);
+        if (!validation.valid) {
           return new Response(JSON.stringify({
-            error: 'Refresh token is required'
+            error: 'Validation failed',
+            message: validation.error
           }), {
             status: 400,
             headers: corsHeaders
           });
         }
+
+        // Extract validated data
+        const { refreshToken } = validation.data!;
 
         try {
           // Look up refresh token in database
           const tokenRecord = await env.todo_db.prepare(
             'SELECT user_id, expires_at FROM refresh_tokens WHERE token = ?'
-          ).bind(body.refreshToken).first() as { user_id: number; expires_at: string } | null;
+          ).bind(refreshToken).first() as { user_id: number; expires_at: string } | null;
 
           // Check if token exists
           if (!tokenRecord) {
@@ -665,7 +998,7 @@ export default {
             // Token expired - delete it from database
             await env.todo_db.prepare(
               'DELETE FROM refresh_tokens WHERE token = ?'
-            ).bind(body.refreshToken).run();
+            ).bind(refreshToken).run();
 
             console.log('Refresh token expired and deleted');
             return new Response(JSON.stringify({
