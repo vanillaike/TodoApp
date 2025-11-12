@@ -1292,7 +1292,7 @@ export default {
         // Query todos with pagination (filtered by user_id for user isolation)
         const { results } = await env.todo_db.prepare(
           'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
-        ).bind(user.userId, limit, offset).all();
+        ).bind(user.userId, limit, offset).all<Todo>();
 
         // Get total count for pagination metadata
         const countResult = await env.todo_db.prepare(
@@ -1389,7 +1389,7 @@ export default {
         // Fetch the created todo
         const todo = await env.todo_db.prepare('SELECT * FROM todos WHERE id = ?')
           .bind(result.meta.last_row_id)
-          .first();
+          .first<Todo>();
 
         return new Response(JSON.stringify(todo), {
           status: 201,
@@ -1417,7 +1417,7 @@ export default {
           'SELECT * FROM todos WHERE id = ? AND user_id = ?'
         )
           .bind(id, user.userId)
-          .first();
+          .first<Todo>();
 
         if (!todo) {
           return new Response(JSON.stringify({ error: 'Todo not found' }), {
@@ -1499,7 +1499,7 @@ export default {
           'SELECT * FROM todos WHERE id = ? AND user_id = ?'
         )
           .bind(id, user.userId)
-          .first();
+          .first<Todo>();
 
         if (!existing) {
           return new Response(JSON.stringify({ error: 'Todo not found' }), {
@@ -1526,7 +1526,7 @@ export default {
           'SELECT * FROM todos WHERE id = ? AND user_id = ?'
         )
           .bind(id, user.userId)
-          .first();
+          .first<Todo>();
 
         return new Response(JSON.stringify(updated), { headers });
       }
@@ -1551,7 +1551,7 @@ export default {
           'SELECT * FROM todos WHERE id = ? AND user_id = ?'
         )
           .bind(id, user.userId)
-          .first();
+          .first<Todo>();
 
         if (!existing) {
           return new Response(JSON.stringify({ error: 'Todo not found' }), {
