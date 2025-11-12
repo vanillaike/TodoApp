@@ -33,12 +33,21 @@
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
 	"vars": {
-		"JWT_SECRET": "dev-secret-change-in-production-use-wrangler-secret-put-JWT_SECRET"
+		// JWT_SECRET configuration:
+		// - Local development: Add JWT_SECRET to .dev.vars file (not committed to git)
+		// - Production: Use `wrangler secret put JWT_SECRET` to set encrypted secret
+		// - Staging: Use `wrangler secret put JWT_SECRET --env staging`
+		// Secret should be cryptographically strong (minimum 32 bytes)
+		// See SECRETS_SETUP.md for detailed instructions
 	}
 	/**
-	 * Note: Use secrets to store sensitive data.
+	 * Secrets Management
+	 * Sensitive data like JWT_SECRET should NEVER be hardcoded here.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 * For production, use: wrangler secret put JWT_SECRET
+	 *
+	 * For local development: Create a .dev.vars file with JWT_SECRET
+	 * For production deployment: Use `wrangler secret put JWT_SECRET`
+	 * See SECRETS_SETUP.md for complete setup instructions
 	 */
 	/**
 	 * Static Assets

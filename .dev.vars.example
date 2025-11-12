@@ -1,0 +1,8 @@
+# Example local development environment variables
+# Copy this file to .dev.vars and fill in your own values
+# .dev.vars is git-ignored and will never be committed
+
+# JWT secret for signing authentication tokens
+# Generate a secure random string (minimum 32 characters)
+# You can generate one with: openssl rand -base64 32
+JWT_SECRET=your-secure-random-secret-here-at-least-32-characters-long
