@@ -822,10 +822,19 @@ export default {
           'SELECT id, email, created_at FROM users WHERE id = ?'
         )
           .bind(userId)
-          .first() as { id: number; email: string; created_at: string };
+          .first<Omit<User, 'password_hash' | 'updated_at'>>();
+
+        if (!newUser) {
+          return new Response(JSON.stringify({
+            error: 'Failed to create user'
+          }), {
+            status: 500,
+            headers
+          });
+        }
 
         // Generate access token (JWT)
-        const accessToken = await generateAccessToken(newUser.id, newUser.email, env);
+        const accessToken = await generateAccessToken(newUser.id!, newUser.email, env);
 
         // Generate refresh token
         const refreshToken = generateRefreshToken();
@@ -845,9 +854,9 @@ export default {
         // Prepare response
         const response: RegisterResponse = {
           user: {
-            id: newUser.id,
+            id: newUser.id!,
             email: newUser.email,
-            created_at: newUser.created_at
+            created_at: newUser.created_at!
           },
           accessToken,
           refreshToken
@@ -921,7 +930,7 @@ export default {
             'SELECT id, email, password_hash, created_at FROM users WHERE email = ?'
           )
             .bind(email)
-            .first() as { id: number; email: string; password_hash: string; created_at: string } | null;
+            .first<User>();
 
           // Always run bcrypt comparison, even if user doesn't exist
           // Use a dummy hash that will never match to normalize timing
@@ -942,7 +951,7 @@ export default {
           }
 
           // Authentication successful - generate tokens
-          const accessToken = await generateAccessToken(user.id, user.email, env);
+          const accessToken = await generateAccessToken(user.id!, user.email, env);
           const refreshToken = generateRefreshToken();
 
           // Calculate refresh token expiration (30 days from now)
@@ -953,15 +962,15 @@ export default {
           await env.todo_db.prepare(
             'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)'
           )
-            .bind(user.id, refreshToken, expiresAtISO)
+            .bind(user.id!, refreshToken, expiresAtISO)
             .run();
 
           // Prepare response (exclude password_hash)
           const response: LoginResponse = {
             user: {
-              id: user.id,
+              id: user.id!,
               email: user.email,
-              created_at: user.created_at
+              created_at: user.created_at!
             },
             accessToken,
             refreshToken
@@ -1175,7 +1184,7 @@ export default {
           // Fetch user information to generate new access token
           const user = await env.todo_db.prepare(
             'SELECT id, email FROM users WHERE id = ?'
-          ).bind(tokenRecord.user_id).first() as { id: number; email: string } | null;
+          ).bind(tokenRecord.user_id).first<Pick<User, 'id' | 'email'>>();
 
           if (!user) {
             // User doesn't exist (shouldn't happen, but handle gracefully)
@@ -1189,7 +1198,7 @@ export default {
           }
 
           // Generate new access token for the user
-          const accessToken = await generateAccessToken(user.id, user.email, env);
+          const accessToken = await generateAccessToken(user.id!, user.email, env);
 
           // REFRESH TOKEN ROTATION (Enhanced Security)
           // Delete the old refresh token and create a new one
