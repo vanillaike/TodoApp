@@ -38,11 +38,61 @@ npm run cf-typegen
 
 ### REST API Endpoints
 All endpoints are defined in src/index.ts:
-- `GET /todos` - List all todos (ordered by created_at DESC)
-- `POST /todos` - Create todo (requires title)
-- `GET /todos/:id` - Get single todo
-- `PUT /todos/:id` - Update todo (partial updates supported)
-- `DELETE /todos/:id` - Delete todo
+
+**Authentication Endpoints (Public):**
+- `POST /auth/register` - Register new user (email + password)
+- `POST /auth/login` - Login and receive access token + refresh token
+- `POST /auth/logout` - Logout and blacklist current token
+- `POST /auth/refresh` - Refresh access token using refresh token
+
+**Todo Endpoints (Protected - requires authentication):**
+- `GET /todos` - List all todos for authenticated user (ordered by created_at DESC)
+- `POST /todos` - Create todo for authenticated user (requires title)
+- `GET /todos/:id` - Get single todo for authenticated user
+- `PUT /todos/:id` - Update todo for authenticated user (partial updates supported)
+- `DELETE /todos/:id` - Delete todo for authenticated user
+
+### Authentication & Authorization
+
+The API uses JWT-based authentication with the following features:
+
+**Token System:**
+- Access tokens: JWT signed with HS256, 7-day expiration
+- Refresh tokens: Random UUID, 30-day expiration
+- Token blacklisting: Immediate invalidation on logout
+
+**Authentication Flow:**
+1. Register or login to receive access token + refresh token
+2. Include `Authorization: Bearer <access_token>` header in protected requests
+3. Use refresh token to get new access token when expired
+4. Logout to blacklist current access token
+
+**User Isolation:**
+- All todo operations are scoped to authenticated user
+- Users can only access their own todos
+- Database queries filter by user_id
+
+### Security Features
+
+**Authentication & Password Security:**
+- JWT Authentication: HS256 signed tokens with 7-day expiration
+- Password Hashing: bcrypt with 10 rounds
+- Token Blacklisting: Immediate token revocation on logout
+- Input Validation: Comprehensive validation on all auth endpoints
+
+**API Security:**
+- CORS: Configurable origin whitelisting (development allows localhost)
+- Security Headers: HSTS, CSP, X-Frame-Options, X-Content-Type-Options
+- Rate Limiting: Configure via Cloudflare Dashboard (see RATE_LIMITING_SETUP.md)
+- User Isolation: Users can only access their own todos
+
+**Security Headers:**
+- `Strict-Transport-Security`: Enforce HTTPS
+- `Content-Security-Policy`: Strict CSP for API
+- `X-Frame-Options`: Prevent clickjacking
+- `X-Content-Type-Options`: Prevent MIME sniffing
+- `Referrer-Policy`: Control referrer information
+- `Permissions-Policy`: Disable unnecessary features
 
 ### Testing
 - Uses Vitest with `@cloudflare/vitest-pool-workers` for integration testing
@@ -68,9 +118,31 @@ wrangler d1 execute todo-db --file=./schema.sql
 
 Note: Database migrations are manual. The schema.sql file defines the initial table structure.
 
+## Environment Variables
+
+### Required Secrets
+
+**JWT_SECRET** (Required for authentication):
+- Secret key for signing JWT access tokens
+- Must be cryptographically strong (minimum 32 characters)
+- Local development: Add to `.dev.vars` file (not committed to git)
+- Production: Use `wrangler secret put JWT_SECRET` to set encrypted secret
+- See SECRETS_SETUP.md for detailed instructions
+
+### Optional Configuration
+
+**ALLOWED_ORIGINS** (Optional - CORS configuration):
+- Comma-separated list of allowed origins for CORS
+- Example: `"https://yourdomain.com,https://app.yourdomain.com"`
+- Leave empty or omit for development (allows localhost)
+- Set in `wrangler.jsonc` vars section or via environment variable
+- Production: Configure specific origins for security
+
 ## Type Definitions
 
-The `Env` interface (src/index.ts:1-3) defines Worker bindings:
+The `Env` interface (src/index.ts:1-4) defines Worker bindings:
 - `todo_db: D1Database` - The D1 database binding
+- `JWT_SECRET: string` - Secret for JWT signing (required)
+- `ALLOWED_ORIGINS?: string` - Optional CORS origin whitelist
 
-The `Todo` interface (src/index.ts:5-12) defines the todo data structure with optional id, created_at, and updated_at fields.
+The `Todo` interface defines the todo data structure with optional id, created_at, and updated_at fields.

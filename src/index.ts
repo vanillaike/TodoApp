@@ -1,6 +1,7 @@
 export interface Env {
   todo_db: D1Database;
   JWT_SECRET: string;
+  ALLOWED_ORIGINS?: string; // Optional: comma-separated list of allowed origins for CORS
 }
 
 interface Todo {
@@ -80,6 +81,94 @@ interface ValidationResult<T = any> {
 
 import bcrypt from 'bcryptjs';
 import * as jose from 'jose';
+
+/**
+ * Generate CORS headers with origin whitelisting
+ * Allows only configured origins to access the API
+ * @param request - The incoming HTTP request
+ * @param env - Environment bindings (should include ALLOWED_ORIGINS)
+ * @returns CORS headers object
+ */
+function getCorsHeaders(request: Request, env: Env): Record<string, string> {
+  const origin = request.headers.get('Origin');
+
+  // Get allowed origins from environment variable (comma-separated list)
+  const allowedOriginsEnv = env.ALLOWED_ORIGINS || '';
+
+  // Parse allowed origins
+  const allowedOrigins: string[] = allowedOriginsEnv
+    .split(',')
+    .map(o => o.trim())
+    .filter(o => o.length > 0);
+
+  // Development mode: if ALLOWED_ORIGINS is not set or empty, allow localhost
+  const isDevelopment = allowedOrigins.length === 0;
+
+  let allowOrigin = 'null'; // Default: deny all
+
+  if (isDevelopment) {
+    // Development: allow localhost and any origin for testing
+    if (origin && (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1'))) {
+      allowOrigin = origin;
+    } else {
+      // Fallback for development when no origin header
+      allowOrigin = '*';
+    }
+  } else {
+    // Production: strict origin checking
+    if (origin && allowedOrigins.includes(origin)) {
+      allowOrigin = origin;
+    }
+  }
+
+  return {
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Max-Age': '86400', // Cache preflight for 24 hours
+    'Content-Type': 'application/json',
+  };
+}
+
+/**
+ * Generate security headers for all responses
+ * Implements defense-in-depth security measures
+ * @param request - The incoming HTTP request (for CORS)
+ * @param env - Environment bindings
+ * @returns Combined CORS and security headers
+ */
+function getSecurityHeaders(request: Request, env: Env): Record<string, string> {
+  return {
+    ...getCorsHeaders(request, env),
+
+    // Prevent MIME type sniffing
+    'X-Content-Type-Options': 'nosniff',
+
+    // Prevent clickjacking attacks
+    'X-Frame-Options': 'DENY',
+
+    // Enable browser XSS protection (legacy, but doesn't hurt)
+    'X-XSS-Protection': '1; mode=block',
+
+    // Enforce HTTPS (only in production, skip for localhost)
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+
+    // Content Security Policy (strict for API)
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+
+    // Control referrer information
+    'Referrer-Policy': 'no-referrer',
+
+    // Disable unnecessary browser features
+    'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), payment=(), usb=()',
+
+    // Prevent caching of sensitive responses
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+  };
+}
 
 /**
  * Hash a password using bcrypt with 10 rounds
@@ -502,12 +591,8 @@ async function verifyAccessToken(token: string, env: Env): Promise<{ userId: num
  * @returns User info { userId, email } or 401 Response with error message
  */
 async function authenticate(request: Request, env: Env): Promise<AuthenticatedUser | Response> {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Content-Type': 'application/json',
-  };
+  // Get security headers for error responses
+  const headers = getSecurityHeaders(request, env);
 
   // Extract Authorization header
   const authHeader = request.headers.get('Authorization');
@@ -517,7 +602,7 @@ async function authenticate(request: Request, env: Env): Promise<AuthenticatedUs
       error: 'Authorization header required'
     }), {
       status: 401,
-      headers: corsHeaders
+      headers
     });
   }
 
@@ -527,7 +612,7 @@ async function authenticate(request: Request, env: Env): Promise<AuthenticatedUs
       error: 'Invalid authorization format. Use: Bearer <token>'
     }), {
       status: 401,
-      headers: corsHeaders
+      headers
     });
   }
 
@@ -542,7 +627,7 @@ async function authenticate(request: Request, env: Env): Promise<AuthenticatedUs
       error: 'Invalid or expired token'
     }), {
       status: 401,
-      headers: corsHeaders
+      headers
     });
   }
 
@@ -556,15 +641,9 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Content-Type': 'application/json',
-    };
-
+    // Handle preflight OPTIONS requests
     if (method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
+      return new Response(null, { headers: getSecurityHeaders(request, env) });
     }
 
     try {
@@ -574,6 +653,8 @@ export default {
 
       // POST /auth/register - User registration endpoint
       if (path === '/auth/register' && method === 'POST') {
+        const headers = getSecurityHeaders(request, env);
+
         // Validate Content-Type header (return 415 for wrong content type)
         if (!validateContentType(request)) {
           return new Response(JSON.stringify({
@@ -581,7 +662,7 @@ export default {
             message: 'Content-Type must be application/json'
           }), {
             status: 415,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -592,7 +673,7 @@ export default {
             message: 'Request body must be 10KB or less'
           }), {
             status: 413,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -606,7 +687,7 @@ export default {
             message: 'Request body must be valid JSON'
           }), {
             status: 400,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -618,7 +699,7 @@ export default {
             message: validation.error
           }), {
             status: 400,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -637,7 +718,7 @@ export default {
             error: 'Email already exists'
           }), {
             status: 409,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -691,12 +772,14 @@ export default {
 
         return new Response(JSON.stringify(response), {
           status: 201,
-          headers: corsHeaders
+          headers
         });
       }
 
       // POST /auth/login - User login endpoint
       if (path === '/auth/login' && method === 'POST') {
+        const headers = getSecurityHeaders(request, env);
+
         // Validate Content-Type header (return 415 for wrong content type)
         if (!validateContentType(request)) {
           return new Response(JSON.stringify({
@@ -704,7 +787,7 @@ export default {
             message: 'Content-Type must be application/json'
           }), {
             status: 415,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -715,7 +798,7 @@ export default {
             message: 'Request body must be 10KB or less'
           }), {
             status: 413,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -729,7 +812,7 @@ export default {
             message: 'Request body must be valid JSON'
           }), {
             status: 400,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -741,7 +824,7 @@ export default {
             message: validation.error
           }), {
             status: 400,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -764,7 +847,7 @@ export default {
               error: 'Invalid credentials'
             }), {
               status: 401,
-              headers: corsHeaders
+              headers
             });
           }
 
@@ -778,7 +861,7 @@ export default {
               error: 'Invalid credentials'
             }), {
               status: 401,
-              headers: corsHeaders
+              headers
             });
           }
 
@@ -812,7 +895,7 @@ export default {
 
           return new Response(JSON.stringify(response), {
             status: 200,
-            headers: corsHeaders
+            headers
           });
 
         } catch (error) {
@@ -822,13 +905,15 @@ export default {
             error: 'Internal server error during login'
           }), {
             status: 500,
-            headers: corsHeaders
+            headers
           });
         }
       }
 
       // POST /auth/logout - Logout endpoint with token blacklist
       if (path === '/auth/logout' && method === 'POST') {
+        const headers = getSecurityHeaders(request, env);
+
         // Authenticate user - verify JWT token
         const authResult = await authenticate(request, env);
         if (authResult instanceof Response) {
@@ -843,7 +928,7 @@ export default {
             error: 'Token extraction failed'
           }), {
             status: 500,
-            headers: corsHeaders
+            headers
           });
         }
         const token = authHeader.substring(7); // Remove "Bearer " prefix
@@ -886,7 +971,7 @@ export default {
                 message: validation.error
               }), {
                 status: 400,
-                headers: corsHeaders
+                headers
               });
             }
             validatedData = validation.data || {};
@@ -908,7 +993,7 @@ export default {
             message: 'Logged out successfully'
           }), {
             status: 200,
-            headers: corsHeaders
+            headers
           });
 
         } catch (error) {
@@ -917,13 +1002,15 @@ export default {
             error: 'Internal server error during logout'
           }), {
             status: 500,
-            headers: corsHeaders
+            headers
           });
         }
       }
 
       // POST /auth/refresh - Refresh token endpoint to get new access token
       if (path === '/auth/refresh' && method === 'POST') {
+        const headers = getSecurityHeaders(request, env);
+
         // Validate Content-Type header (return 415 for wrong content type)
         if (!validateContentType(request)) {
           return new Response(JSON.stringify({
@@ -931,7 +1018,7 @@ export default {
             message: 'Content-Type must be application/json'
           }), {
             status: 415,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -942,7 +1029,7 @@ export default {
             message: 'Request body must be 10KB or less'
           }), {
             status: 413,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -956,7 +1043,7 @@ export default {
             message: 'Request body must be valid JSON'
           }), {
             status: 400,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -968,7 +1055,7 @@ export default {
             message: validation.error
           }), {
             status: 400,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -988,7 +1075,7 @@ export default {
               error: 'Invalid refresh token'
             }), {
               status: 401,
-              headers: corsHeaders
+              headers
             });
           }
 
@@ -1005,7 +1092,7 @@ export default {
               error: 'Refresh token expired'
             }), {
               status: 401,
-              headers: corsHeaders
+              headers
             });
           }
 
@@ -1021,7 +1108,7 @@ export default {
               error: 'Invalid refresh token'
             }), {
               status: 401,
-              headers: corsHeaders
+              headers
             });
           }
 
@@ -1038,7 +1125,7 @@ export default {
             accessToken
           }), {
             status: 200,
-            headers: corsHeaders
+            headers
           });
 
         } catch (error) {
@@ -1047,7 +1134,7 @@ export default {
             error: 'Internal server error during token refresh'
           }), {
             status: 500,
-            headers: corsHeaders
+            headers
           });
         }
       }
@@ -1058,6 +1145,8 @@ export default {
 
       // GET /todos - List all todos for authenticated user
       if (path === '/todos' && method === 'GET') {
+        const headers = getSecurityHeaders(request, env);
+
         // Authenticate user - verify JWT token
         const authResult = await authenticate(request, env);
         if (authResult instanceof Response) {
@@ -1070,11 +1159,13 @@ export default {
           'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC'
         ).bind(user.userId).all();
 
-        return new Response(JSON.stringify(results), { headers: corsHeaders });
+        return new Response(JSON.stringify(results), { headers });
       }
 
       // POST /todos - Create a new todo for authenticated user
       if (path === '/todos' && method === 'POST') {
+        const headers = getSecurityHeaders(request, env);
+
         // Authenticate user - verify JWT token
         const authResult = await authenticate(request, env);
         if (authResult instanceof Response) {
@@ -1087,7 +1178,7 @@ export default {
         if (!body.title || body.title.trim() === '') {
           return new Response(JSON.stringify({ error: 'Title is required' }), {
             status: 400,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -1105,13 +1196,15 @@ export default {
 
         return new Response(JSON.stringify(todo), {
           status: 201,
-          headers: corsHeaders
+          headers
         });
       }
 
       // GET /todos/:id - Get a specific todo for authenticated user
       const getTodoMatch = path.match(/^\/todos\/(\d+)$/);
       if (getTodoMatch && method === 'GET') {
+        const headers = getSecurityHeaders(request, env);
+
         // Authenticate user - verify JWT token
         const authResult = await authenticate(request, env);
         if (authResult instanceof Response) {
@@ -1132,16 +1225,18 @@ export default {
         if (!todo) {
           return new Response(JSON.stringify({ error: 'Todo not found' }), {
             status: 404,
-            headers: corsHeaders
+            headers
           });
         }
 
-        return new Response(JSON.stringify(todo), { headers: corsHeaders });
+        return new Response(JSON.stringify(todo), { headers });
       }
 
       // PUT /todos/:id - Update a todo for authenticated user
       const putTodoMatch = path.match(/^\/todos\/(\d+)$/);
       if (putTodoMatch && method === 'PUT') {
+        const headers = getSecurityHeaders(request, env);
+
         // Authenticate user - verify JWT token
         const authResult = await authenticate(request, env);
         if (authResult instanceof Response) {
@@ -1163,7 +1258,7 @@ export default {
         if (!existing) {
           return new Response(JSON.stringify({ error: 'Todo not found' }), {
             status: 404,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -1187,12 +1282,14 @@ export default {
           .bind(id, user.userId)
           .first();
 
-        return new Response(JSON.stringify(updated), { headers: corsHeaders });
+        return new Response(JSON.stringify(updated), { headers });
       }
 
       // DELETE /todos/:id - Delete a todo for authenticated user
       const deleteTodoMatch = path.match(/^\/todos\/(\d+)$/);
       if (deleteTodoMatch && method === 'DELETE') {
+        const headers = getSecurityHeaders(request, env);
+
         // Authenticate user - verify JWT token
         const authResult = await authenticate(request, env);
         if (authResult instanceof Response) {
@@ -1213,7 +1310,7 @@ export default {
         if (!existing) {
           return new Response(JSON.stringify({ error: 'Todo not found' }), {
             status: 404,
-            headers: corsHeaders
+            headers
           });
         }
 
@@ -1223,13 +1320,13 @@ export default {
           .run();
 
         return new Response(JSON.stringify({ message: 'Todo deleted successfully' }), {
-          headers: corsHeaders
+          headers
         });
       }
 
       return new Response(JSON.stringify({ error: 'Not Found' }), {
         status: 404,
-        headers: corsHeaders
+        headers: getSecurityHeaders(request, env)
       });
 
     } catch (error) {
@@ -1238,7 +1335,7 @@ export default {
         message: error instanceof Error ? error.message : 'Unknown error'
       }), {
         status: 500,
-        headers: corsHeaders
+        headers: getSecurityHeaders(request, env)
       });
     }
   },
