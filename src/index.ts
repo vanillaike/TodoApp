@@ -509,6 +509,89 @@ function validateRefreshInput(body: any): ValidationResult<{ refreshToken: strin
 }
 
 /**
+ * Comprehensive validation for todo input
+ * Validates title and description with length limits and type checking
+ * @param body - Request body to validate
+ * @param isUpdate - Whether this is an update (makes title optional)
+ * @returns ValidationResult with validated data or error message
+ */
+function validateTodoInput(body: any, isUpdate: boolean = false): ValidationResult<{
+  title?: string;
+  description?: string | null;
+  completed?: number;
+}> {
+  // Check body is a valid object (not array, null, etc.)
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+
+  // Check for unknown fields (security: reject extra fields)
+  const allowedFields = ['title', 'description', 'completed'];
+  const providedFields = Object.keys(body);
+  const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
+  if (unknownFields.length > 0) {
+    return {
+      valid: false,
+      error: `Unknown fields: ${unknownFields.join(', ')}. Only title, description, and completed are allowed.`
+    };
+  }
+
+  const validated: any = {};
+
+  // Validate title (required for create, optional for update)
+  if (body.title !== undefined) {
+    if (typeof body.title !== 'string') {
+      return { valid: false, error: 'Title must be a string' };
+    }
+
+    const title = body.title.trim();
+
+    if (title.length === 0) {
+      return { valid: false, error: 'Title cannot be empty' };
+    }
+
+    // Enforce maximum title length (200 chars)
+    if (title.length > 200) {
+      return { valid: false, error: 'Title must be 200 characters or less' };
+    }
+
+    validated.title = title;
+  } else if (!isUpdate) {
+    return { valid: false, error: 'Title is required' };
+  }
+
+  // Validate description (optional)
+  if (body.description !== undefined) {
+    if (body.description !== null && typeof body.description !== 'string') {
+      return { valid: false, error: 'Description must be a string or null' };
+    }
+
+    if (body.description !== null && body.description.length > 2000) {
+      return { valid: false, error: 'Description must be 2000 characters or less' };
+    }
+
+    validated.description = body.description;
+  }
+
+  // Validate completed (optional)
+  if (body.completed !== undefined) {
+    // Accept boolean or number (0/1)
+    if (typeof body.completed === 'boolean') {
+      validated.completed = body.completed ? 1 : 0;
+    } else if (typeof body.completed === 'number') {
+      if (body.completed !== 0 && body.completed !== 1) {
+        return { valid: false, error: 'Completed must be 0 or 1' };
+      }
+      validated.completed = body.completed;
+    } else {
+      return { valid: false, error: 'Completed must be a boolean or 0/1' };
+    }
+  }
+
+  return { valid: true, data: validated };
+}
+
+/**
  * Generate a JWT access token with 7 day expiration
  * @param userId - User's database ID
  * @param email - User's email address
@@ -840,23 +923,16 @@ export default {
             .bind(email)
             .first() as { id: number; email: string; password_hash: string; created_at: string } | null;
 
-          // If user doesn't exist, return generic error (prevent email enumeration)
-          if (!user) {
-            console.log(`Login failed: User not found for email ${email}`);
-            return new Response(JSON.stringify({
-              error: 'Invalid credentials'
-            }), {
-              status: 401,
-              headers
-            });
-          }
+          // Always run bcrypt comparison, even if user doesn't exist
+          // Use a dummy hash that will never match to normalize timing
+          // This prevents timing attacks that could enumerate valid email addresses
+          const dummyHash = '$2a$10$invalidhashthatshouldnevermatchXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+          const hashToCompare = user?.password_hash || dummyHash;
+          const isValidPassword = await verifyPassword(password, hashToCompare);
 
-          // Verify password using bcrypt comparison (timing-safe)
-          const isValidPassword = await verifyPassword(password, user.password_hash);
-
-          // If password is incorrect, return generic error
-          if (!isValidPassword) {
-            console.log(`Login failed: Invalid password for user ID ${user.id}`);
+          // Now both paths (user not found OR wrong password) take similar time
+          if (!user || !isValidPassword) {
+            console.log(`Login failed for email ${email}`);
             return new Response(JSON.stringify({
               error: 'Invalid credentials'
             }), {
@@ -1115,14 +1191,33 @@ export default {
           // Generate new access token for the user
           const accessToken = await generateAccessToken(user.id, user.email, env);
 
-          // Optional: Implement refresh token rotation for enhanced security
-          // This would delete the old refresh token and create a new one
-          // For now, we'll keep the existing refresh token (simpler approach)
+          // REFRESH TOKEN ROTATION (Enhanced Security)
+          // Delete the old refresh token and create a new one
+          // This limits the attack window if a refresh token is stolen
 
-          console.log(`New access token generated for user ${user.id}`);
+          // 1. Delete the old refresh token
+          await env.todo_db.prepare(
+            'DELETE FROM refresh_tokens WHERE token = ?'
+          ).bind(refreshToken).run();
 
+          // 2. Generate new refresh token
+          const newRefreshToken = generateRefreshToken();
+
+          // 3. Calculate new expiration (30 days from now)
+          const newExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+          const newExpiresAtISO = newExpiresAt.toISOString();
+
+          // 4. Store new refresh token in database
+          await env.todo_db.prepare(
+            'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)'
+          ).bind(user.id, newRefreshToken, newExpiresAtISO).run();
+
+          console.log(`Tokens rotated for user ${user.id}`);
+
+          // 5. Return BOTH access token and NEW refresh token
           return new Response(JSON.stringify({
-            accessToken
+            accessToken,
+            refreshToken: newRefreshToken  // Client must update stored refresh token
           }), {
             status: 200,
             headers
@@ -1143,7 +1238,7 @@ export default {
       // TODO ROUTES (All protected by JWT authentication)
       // ========================================================================
 
-      // GET /todos - List all todos for authenticated user
+      // GET /todos - List todos for authenticated user with pagination
       if (path === '/todos' && method === 'GET') {
         const headers = getSecurityHeaders(request, env);
 
@@ -1154,12 +1249,68 @@ export default {
         }
         const user = authResult; // Extract authenticated user info
 
-        // Query todos filtered by user_id to ensure user isolation
-        const { results } = await env.todo_db.prepare(
-          'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC'
-        ).bind(user.userId).all();
+        // Parse pagination parameters from query string
+        const url = new URL(request.url);
+        const limitParam = url.searchParams.get('limit');
+        const offsetParam = url.searchParams.get('offset');
 
-        return new Response(JSON.stringify(results), { headers });
+        // Default pagination values
+        let limit = 50; // Default page size
+        let offset = 0;
+
+        // Validate and parse limit parameter
+        if (limitParam) {
+          const parsedLimit = parseInt(limitParam);
+          if (isNaN(parsedLimit) || parsedLimit < 1) {
+            return new Response(JSON.stringify({
+              error: 'Invalid limit parameter',
+              message: 'Limit must be a positive integer'
+            }), {
+              status: 400,
+              headers
+            });
+          }
+          // Cap maximum limit at 100 to prevent abuse
+          limit = Math.min(parsedLimit, 100);
+        }
+
+        // Validate and parse offset parameter
+        if (offsetParam) {
+          const parsedOffset = parseInt(offsetParam);
+          if (isNaN(parsedOffset) || parsedOffset < 0) {
+            return new Response(JSON.stringify({
+              error: 'Invalid offset parameter',
+              message: 'Offset must be a non-negative integer'
+            }), {
+              status: 400,
+              headers
+            });
+          }
+          offset = parsedOffset;
+        }
+
+        // Query todos with pagination (filtered by user_id for user isolation)
+        const { results } = await env.todo_db.prepare(
+          'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
+        ).bind(user.userId, limit, offset).all();
+
+        // Get total count for pagination metadata
+        const countResult = await env.todo_db.prepare(
+          'SELECT COUNT(*) as total FROM todos WHERE user_id = ?'
+        ).bind(user.userId).first() as { total: number } | null;
+
+        const total = countResult?.total || 0;
+
+        // Return paginated response with metadata
+        return new Response(JSON.stringify({
+          todos: results,
+          pagination: {
+            limit,
+            offset,
+            total,
+            hasMore: offset + limit < total
+          }
+        }), { headers });
       }
 
       // POST /todos - Create a new todo for authenticated user
@@ -1173,20 +1324,66 @@ export default {
         }
         const user = authResult; // Extract authenticated user info
 
-        const body: Partial<Todo> = await request.json();
+        // Validate Content-Type header
+        if (!validateContentType(request)) {
+          return new Response(JSON.stringify({
+            error: 'Unsupported Media Type',
+            message: 'Content-Type must be application/json'
+          }), {
+            status: 415,
+            headers
+          });
+        }
 
-        if (!body.title || body.title.trim() === '') {
-          return new Response(JSON.stringify({ error: 'Title is required' }), {
+        // Check request size
+        if (!checkRequestSize(request)) {
+          return new Response(JSON.stringify({
+            error: 'Payload Too Large',
+            message: 'Request body must be 10KB or less'
+          }), {
+            status: 413,
+            headers
+          });
+        }
+
+        // Parse request body
+        let body: any;
+        try {
+          body = await request.json();
+        } catch (error) {
+          return new Response(JSON.stringify({
+            error: 'Invalid JSON',
+            message: 'Request body must be valid JSON'
+          }), {
             status: 400,
             headers
           });
         }
 
-        // Insert todo with user_id to associate with authenticated user
+        // Comprehensive input validation
+        const validation = validateTodoInput(body, false);
+        if (!validation.valid) {
+          return new Response(JSON.stringify({
+            error: 'Validation failed',
+            message: validation.error
+          }), {
+            status: 400,
+            headers
+          });
+        }
+
+        const validatedData = validation.data!;
+
+        // Insert todo with validated data and user_id
         const result = await env.todo_db.prepare(
           'INSERT INTO todos (title, description, completed, user_id) VALUES (?, ?, ?, ?)'
         )
-          .bind(body.title, body.description || null, body.completed || 0, user.userId)
+          .bind(
+            validatedData.title,
+            validatedData.description !== undefined ? validatedData.description : null,
+            validatedData.completed !== undefined ? validatedData.completed : 0,
+            user.userId
+          )
           .run();
 
         // Fetch the created todo
@@ -1245,7 +1442,56 @@ export default {
         const user = authResult; // Extract authenticated user info
 
         const id = putTodoMatch[1];
-        const body: Partial<Todo> = await request.json();
+
+        // Validate Content-Type header
+        if (!validateContentType(request)) {
+          return new Response(JSON.stringify({
+            error: 'Unsupported Media Type',
+            message: 'Content-Type must be application/json'
+          }), {
+            status: 415,
+            headers
+          });
+        }
+
+        // Check request size
+        if (!checkRequestSize(request)) {
+          return new Response(JSON.stringify({
+            error: 'Payload Too Large',
+            message: 'Request body must be 10KB or less'
+          }), {
+            status: 413,
+            headers
+          });
+        }
+
+        // Parse request body
+        let body: any;
+        try {
+          body = await request.json();
+        } catch (error) {
+          return new Response(JSON.stringify({
+            error: 'Invalid JSON',
+            message: 'Request body must be valid JSON'
+          }), {
+            status: 400,
+            headers
+          });
+        }
+
+        // Comprehensive input validation (isUpdate = true makes title optional)
+        const validation = validateTodoInput(body, true);
+        if (!validation.valid) {
+          return new Response(JSON.stringify({
+            error: 'Validation failed',
+            message: validation.error
+          }), {
+            status: 400,
+            headers
+          });
+        }
+
+        const validatedData = validation.data!;
 
         // Check if todo exists AND belongs to user (user isolation)
         // Returns 404 if todo doesn't exist OR doesn't belong to user (don't reveal existence)
@@ -1262,14 +1508,14 @@ export default {
           });
         }
 
-        // Update todo with user_id filter to ensure user isolation
+        // Update todo with validated data
         await env.todo_db.prepare(
           'UPDATE todos SET title = ?, description = ?, completed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?'
         )
           .bind(
-            body.title !== undefined ? body.title : existing.title,
-            body.description !== undefined ? body.description : existing.description,
-            body.completed !== undefined ? body.completed : existing.completed,
+            validatedData.title !== undefined ? validatedData.title : existing.title,
+            validatedData.description !== undefined ? validatedData.description : existing.description,
+            validatedData.completed !== undefined ? validatedData.completed : existing.completed,
             id,
             user.userId
           )
