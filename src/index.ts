@@ -22,8 +22,8 @@ interface User {
   updated_at?: string;
 }
 
-// Registration request body
-interface RegisterRequest {
+// Authentication request (used by both registration and login)
+interface AuthenticateRequest {
   email: string;
   password: string;
 }
@@ -38,12 +38,6 @@ interface AuthenticateResponse {
   };
   accessToken: string;
   refreshToken: string;
-}
-
-// Login request body
-interface LoginRequest {
-  email: string;
-  password: string;
 }
 
 // Password validation result
@@ -286,7 +280,7 @@ function validatePassword(password: string): PasswordValidation {
  * @param body - Request body to validate (should contain email and password)
  * @returns ValidationResult with validated data or error message
  */
-function validateRegisterInput(body: any): ValidationResult<{ email: string; password: string }> {
+function validateRegisterInput(body: any): ValidationResult<AuthenticateRequest> {
   // Check body is a valid object (not array, null, etc.)
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return { valid: false, error: 'Request body must be a JSON object' };
@@ -352,7 +346,7 @@ function validateRegisterInput(body: any): ValidationResult<{ email: string; pas
  * @param body - Request body to validate (should contain email and password)
  * @returns ValidationResult with validated data or error message
  */
-function validateLoginInput(body: any): ValidationResult<{ email: string; password: string }> {
+function validateLoginInput(body: any): ValidationResult<AuthenticateRequest> {
   // Check body is a valid object (not array, null, etc.)
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return { valid: false, error: 'Request body must be a JSON object' };
