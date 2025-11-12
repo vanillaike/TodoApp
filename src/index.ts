@@ -28,8 +28,9 @@ interface RegisterRequest {
   password: string;
 }
 
-// Registration response (excludes password_hash)
-interface RegisterResponse {
+// Authentication response (used by both registration and login)
+// Excludes password_hash for security
+interface AuthenticateResponse {
   user: {
     id: number;
     email: string;
@@ -43,17 +44,6 @@ interface RegisterResponse {
 interface LoginRequest {
   email: string;
   password: string;
-}
-
-// Login response (same structure as registration)
-interface LoginResponse {
-  user: {
-    id: number;
-    email: string;
-    created_at: string;
-  };
-  accessToken: string;
-  refreshToken: string;
 }
 
 // Password validation result
@@ -852,7 +842,7 @@ export default {
           .run();
 
         // Prepare response
-        const response: RegisterResponse = {
+        const response: AuthenticateResponse = {
           user: {
             id: newUser.id!,
             email: newUser.email,
@@ -966,7 +956,7 @@ export default {
             .run();
 
           // Prepare response (exclude password_hash)
-          const response: LoginResponse = {
+          const response: AuthenticateResponse = {
             user: {
               id: user.id!,
               email: user.email,
