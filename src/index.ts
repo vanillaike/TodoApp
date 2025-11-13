@@ -65,6 +65,17 @@ interface ValidationResult<T = any> {
 
 import bcrypt from 'bcryptjs';
 import * as jose from 'jose';
+import { CONFIG } from './config';
+import {
+  errorResponse,
+  validationErrorResponse,
+  successResponse,
+  createdResponse,
+  notFoundResponse,
+  unsupportedMediaTypeResponse,
+  payloadTooLargeResponse,
+  invalidJsonResponse
+} from './utils/responses';
 
 /**
  * Generate CORS headers with origin whitelisting
@@ -155,12 +166,12 @@ function getSecurityHeaders(request: Request, env: Env): Record<string, string> 
 }
 
 /**
- * Hash a password using bcrypt with 10 rounds
+ * Hash a password using bcrypt with configured rounds
  * @param password - Plain text password to hash
  * @returns Promise resolving to bcrypt hash string
  */
 async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 10);
+  return bcrypt.hash(password, CONFIG.BCRYPT_ROUNDS);
 }
 
 /**
@@ -189,10 +200,10 @@ function validateContentType(request: Request): boolean {
  * Check if request body size is within acceptable limits
  * Prevents denial-of-service attacks from oversized payloads
  * @param request - The incoming HTTP request
- * @param maxSizeBytes - Maximum allowed size in bytes (default: 10240 = 10KB)
+ * @param maxSizeBytes - Maximum allowed size in bytes (default: from CONFIG)
  * @returns true if size is acceptable, false if too large
  */
-function checkRequestSize(request: Request, maxSizeBytes: number = 10240): boolean {
+function checkRequestSize(request: Request, maxSizeBytes: number = CONFIG.MAX_REQUEST_SIZE_BYTES): boolean {
   const contentLength = request.headers.get('Content-Length');
   if (contentLength) {
     const size = parseInt(contentLength);
@@ -209,8 +220,8 @@ function checkRequestSize(request: Request, maxSizeBytes: number = 10240): boole
  * @returns true if email format is valid, false otherwise
  */
 function validateEmail(email: string): boolean {
-  // Check email length (max 255 chars per RFC standards)
-  if (!email || email.length === 0 || email.length > 255) {
+  // Check email length (max per RFC standards)
+  if (!email || email.length === 0 || email.length > CONFIG.EMAIL_MAX_LENGTH) {
     return false;
   }
 
@@ -234,24 +245,24 @@ function validateEmail(email: string): boolean {
 
 /**
  * Validate password strength requirements with length constraints
- * Enforces minimum 8 chars, at least 1 letter and 1 number
- * Maximum 128 chars to prevent DoS attacks
+ * Enforces minimum length, at least 1 letter and 1 number
+ * Maximum length to prevent DoS attacks
  * @param password - Password to validate
  * @returns Object with valid boolean and optional error message
  */
 function validatePassword(password: string): PasswordValidation {
-  if (!password || password.length < 8) {
+  if (!password || password.length < CONFIG.PASSWORD_MIN_LENGTH) {
     return {
       valid: false,
-      error: 'Password must be at least 8 characters long'
+      error: `Password must be at least ${CONFIG.PASSWORD_MIN_LENGTH} characters long`
     };
   }
 
   // Enforce maximum length to prevent denial-of-service via bcrypt
-  if (password.length > 128) {
+  if (password.length > CONFIG.PASSWORD_MAX_LENGTH) {
     return {
       valid: false,
-      error: 'Password must be 128 characters or less'
+      error: `Password must be ${CONFIG.PASSWORD_MAX_LENGTH} characters or less`
     };
   }
 
@@ -275,18 +286,21 @@ function validatePassword(password: string): PasswordValidation {
 }
 
 /**
- * Comprehensive validation for registration input
- * Validates email and password with type checking, length limits, and unknown field rejection
- * @param body - Request body to validate (should contain email and password)
+ * Validate authentication input (used by both register and login)
+ * @param body - Request body to validate
+ * @param requirePasswordStrength - Whether to enforce password strength rules
  * @returns ValidationResult with validated data or error message
  */
-function validateRegisterInput(body: any): ValidationResult<AuthenticateRequest> {
-  // Check body is a valid object (not array, null, etc.)
+function validateAuthInput(
+  body: any,
+  requirePasswordStrength: boolean
+): ValidationResult<AuthenticateRequest> {
+  // Validate body structure
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return { valid: false, error: 'Request body must be a JSON object' };
   }
 
-  // Check for unknown fields (security: reject extra fields to prevent injection)
+  // Check for unknown fields
   const allowedFields = ['email', 'password'];
   const providedFields = Object.keys(body);
   const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
@@ -297,47 +311,55 @@ function validateRegisterInput(body: any): ValidationResult<AuthenticateRequest>
     };
   }
 
-  // Validate email is provided and is a string
+  // Validate email field
   if (!body.email || typeof body.email !== 'string') {
     return { valid: false, error: 'Email is required and must be a string' };
   }
 
-  // Normalize email: trim whitespace and convert to lowercase
   const email = body.email.trim().toLowerCase();
 
-  // Check email is not empty after trimming
   if (email.length === 0) {
     return { valid: false, error: 'Email cannot be empty' };
   }
 
-  // Check email length (max 255 characters per RFC standards)
-  if (email.length > 255) {
-    return { valid: false, error: 'Email must be 255 characters or less' };
+  if (email.length > CONFIG.EMAIL_MAX_LENGTH) {
+    return { valid: false, error: `Email must be ${CONFIG.EMAIL_MAX_LENGTH} characters or less` };
   }
 
-  // Validate email format using enhanced validation
   if (!validateEmail(email)) {
     return { valid: false, error: 'Invalid email format' };
   }
 
-  // Validate password is provided and is a string
+  // Validate password field
   if (!body.password || typeof body.password !== 'string') {
     return { valid: false, error: 'Password is required and must be a string' };
   }
 
   const password = body.password;
 
-  // Validate password strength (includes length, letter, number checks)
-  const passwordValidation = validatePassword(password);
-  if (!passwordValidation.valid) {
-    return { valid: false, error: passwordValidation.error };
+  if (password.length === 0) {
+    return { valid: false, error: 'Password cannot be empty' };
   }
 
-  // All validation passed - return normalized data
-  return {
-    valid: true,
-    data: { email, password }
-  };
+  // Optionally validate password strength (for registration only)
+  if (requirePasswordStrength) {
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      return { valid: false, error: passwordValidation.error };
+    }
+  }
+
+  return { valid: true, data: { email, password } };
+}
+
+/**
+ * Comprehensive validation for registration input
+ * Validates email and password with type checking, length limits, and unknown field rejection
+ * @param body - Request body to validate (should contain email and password)
+ * @returns ValidationResult with validated data or error message
+ */
+function validateRegisterInput(body: any): ValidationResult<AuthenticateRequest> {
+  return validateAuthInput(body, true);
 }
 
 /**
@@ -347,54 +369,7 @@ function validateRegisterInput(body: any): ValidationResult<AuthenticateRequest>
  * @returns ValidationResult with validated data or error message
  */
 function validateLoginInput(body: any): ValidationResult<AuthenticateRequest> {
-  // Check body is a valid object (not array, null, etc.)
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    return { valid: false, error: 'Request body must be a JSON object' };
-  }
-
-  // Check for unknown fields (security: reject extra fields)
-  const allowedFields = ['email', 'password'];
-  const providedFields = Object.keys(body);
-  const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
-  if (unknownFields.length > 0) {
-    return {
-      valid: false,
-      error: `Unknown fields: ${unknownFields.join(', ')}. Only email and password are allowed.`
-    };
-  }
-
-  // Validate email is provided and is a string
-  if (!body.email || typeof body.email !== 'string') {
-    return { valid: false, error: 'Email is required and must be a string' };
-  }
-
-  // Normalize email: trim whitespace and convert to lowercase
-  const email = body.email.trim().toLowerCase();
-
-  // Check email is not empty after trimming
-  if (email.length === 0) {
-    return { valid: false, error: 'Email cannot be empty' };
-  }
-
-  // Validate password is provided and is a string
-  // Note: We don't validate password format for login (only check it exists)
-  // This prevents revealing whether the issue is email or password
-  if (!body.password || typeof body.password !== 'string') {
-    return { valid: false, error: 'Password is required and must be a string' };
-  }
-
-  const password = body.password;
-
-  // Check password is not empty
-  if (password.length === 0) {
-    return { valid: false, error: 'Password cannot be empty' };
-  }
-
-  // All validation passed - return normalized data
-  return {
-    valid: true,
-    data: { email, password }
-  };
+  return validateAuthInput(body, false);
 }
 
 /**
@@ -534,9 +509,9 @@ function validateTodoInput(body: any, isUpdate: boolean = false): ValidationResu
       return { valid: false, error: 'Title cannot be empty' };
     }
 
-    // Enforce maximum title length (200 chars)
-    if (title.length > 200) {
-      return { valid: false, error: 'Title must be 200 characters or less' };
+    // Enforce maximum title length
+    if (title.length > CONFIG.TITLE_MAX_LENGTH) {
+      return { valid: false, error: `Title must be ${CONFIG.TITLE_MAX_LENGTH} characters or less` };
     }
 
     validated.title = title;
@@ -550,8 +525,8 @@ function validateTodoInput(body: any, isUpdate: boolean = false): ValidationResu
       return { valid: false, error: 'Description must be a string or null' };
     }
 
-    if (body.description !== null && body.description.length > 2000) {
-      return { valid: false, error: 'Description must be 2000 characters or less' };
+    if (body.description !== null && body.description.length > CONFIG.DESCRIPTION_MAX_LENGTH) {
+      return { valid: false, error: `Description must be ${CONFIG.DESCRIPTION_MAX_LENGTH} characters or less` };
     }
 
     validated.description = body.description;
@@ -576,7 +551,7 @@ function validateTodoInput(body: any, isUpdate: boolean = false): ValidationResu
 }
 
 /**
- * Generate a JWT access token with 7 day expiration
+ * Generate a JWT access token with configured expiration
  * @param userId - User's database ID
  * @param email - User's email address
  * @param env - Environment bindings (contains JWT_SECRET)
@@ -592,7 +567,7 @@ async function generateAccessToken(userId: number, email: string, env: Env): Pro
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('7d') // 7 days
+    .setExpirationTime(CONFIG.ACCESS_TOKEN_EXPIRY)
     .sign(secret);
 
   return token;
@@ -665,22 +640,12 @@ async function authenticate(request: Request, env: Env): Promise<AuthenticatedUs
   const authHeader = request.headers.get('Authorization');
 
   if (!authHeader) {
-    return new Response(JSON.stringify({
-      error: 'Authorization header required'
-    }), {
-      status: 401,
-      headers
-    });
+    return errorResponse('Authorization header required', 401, headers);
   }
 
   // Check if header starts with "Bearer "
   if (!authHeader.startsWith('Bearer ')) {
-    return new Response(JSON.stringify({
-      error: 'Invalid authorization format. Use: Bearer <token>'
-    }), {
-      status: 401,
-      headers
-    });
+    return errorResponse('Invalid authorization format. Use: Bearer <token>', 401, headers);
   }
 
   // Extract token from "Bearer <token>"
@@ -690,12 +655,7 @@ async function authenticate(request: Request, env: Env): Promise<AuthenticatedUs
   const userInfo = await verifyAccessToken(token, env);
 
   if (!userInfo) {
-    return new Response(JSON.stringify({
-      error: 'Invalid or expired token'
-    }), {
-      status: 401,
-      headers
-    });
+    return errorResponse('Invalid or expired token', 401, headers);
   }
 
   // Return authenticated user info
@@ -724,24 +684,12 @@ export default {
 
         // Validate Content-Type header (return 415 for wrong content type)
         if (!validateContentType(request)) {
-          return new Response(JSON.stringify({
-            error: 'Unsupported Media Type',
-            message: 'Content-Type must be application/json'
-          }), {
-            status: 415,
-            headers
-          });
+          return unsupportedMediaTypeResponse(headers);
         }
 
         // Check request size to prevent DoS attacks
         if (!checkRequestSize(request)) {
-          return new Response(JSON.stringify({
-            error: 'Payload Too Large',
-            message: 'Request body must be 10KB or less'
-          }), {
-            status: 413,
-            headers
-          });
+          return payloadTooLargeResponse(headers);
         }
 
         // Parse request body
@@ -749,25 +697,13 @@ export default {
         try {
           body = await request.json();
         } catch (error) {
-          return new Response(JSON.stringify({
-            error: 'Invalid JSON',
-            message: 'Request body must be valid JSON'
-          }), {
-            status: 400,
-            headers
-          });
+          return invalidJsonResponse(headers);
         }
 
         // Comprehensive input validation
         const validation = validateRegisterInput(body);
         if (!validation.valid) {
-          return new Response(JSON.stringify({
-            error: 'Validation failed',
-            message: validation.error
-          }), {
-            status: 400,
-            headers
-          });
+          return validationErrorResponse(validation.error!, headers);
         }
 
         // Extract validated and normalized data
@@ -781,12 +717,7 @@ export default {
           .first();
 
         if (existingUser) {
-          return new Response(JSON.stringify({
-            error: 'Email already exists'
-          }), {
-            status: 409,
-            headers
-          });
+          return errorResponse('Email already exists', 409, headers);
         }
 
         // Hash password
@@ -809,12 +740,7 @@ export default {
           .first<Omit<User, 'password_hash' | 'updated_at'>>();
 
         if (!newUser) {
-          return new Response(JSON.stringify({
-            error: 'Failed to create user'
-          }), {
-            status: 500,
-            headers
-          });
+          return errorResponse('Failed to create user', 500, headers);
         }
 
         // Generate access token (JWT)
@@ -823,9 +749,9 @@ export default {
         // Generate refresh token
         const refreshToken = generateRefreshToken();
 
-        // Calculate refresh token expiration (30 days from now)
+        // Calculate refresh token expiration
         const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 30);
+        expiresAt.setDate(expiresAt.getDate() + CONFIG.REFRESH_TOKEN_EXPIRY_DAYS);
         const expiresAtISO = expiresAt.toISOString();
 
         // Store refresh token in database
@@ -846,10 +772,7 @@ export default {
           refreshToken
         };
 
-        return new Response(JSON.stringify(response), {
-          status: 201,
-          headers
-        });
+        return createdResponse(response, headers);
       }
 
       // POST /auth/login - User login endpoint
@@ -858,24 +781,12 @@ export default {
 
         // Validate Content-Type header (return 415 for wrong content type)
         if (!validateContentType(request)) {
-          return new Response(JSON.stringify({
-            error: 'Unsupported Media Type',
-            message: 'Content-Type must be application/json'
-          }), {
-            status: 415,
-            headers
-          });
+          return unsupportedMediaTypeResponse(headers);
         }
 
         // Check request size to prevent DoS attacks
         if (!checkRequestSize(request)) {
-          return new Response(JSON.stringify({
-            error: 'Payload Too Large',
-            message: 'Request body must be 10KB or less'
-          }), {
-            status: 413,
-            headers
-          });
+          return payloadTooLargeResponse(headers);
         }
 
         // Parse request body
@@ -883,25 +794,13 @@ export default {
         try {
           body = await request.json();
         } catch (error) {
-          return new Response(JSON.stringify({
-            error: 'Invalid JSON',
-            message: 'Request body must be valid JSON'
-          }), {
-            status: 400,
-            headers
-          });
+          return invalidJsonResponse(headers);
         }
 
         // Comprehensive input validation
         const validation = validateLoginInput(body);
         if (!validation.valid) {
-          return new Response(JSON.stringify({
-            error: 'Validation failed',
-            message: validation.error
-          }), {
-            status: 400,
-            headers
-          });
+          return validationErrorResponse(validation.error!, headers);
         }
 
         // Extract validated and normalized data
@@ -926,20 +825,15 @@ export default {
           // Now both paths (user not found OR wrong password) take similar time
           if (!user || !isValidPassword) {
             console.log(`Login failed for email ${email}`);
-            return new Response(JSON.stringify({
-              error: 'Invalid credentials'
-            }), {
-              status: 401,
-              headers
-            });
+            return errorResponse('Invalid credentials', 401, headers);
           }
 
           // Authentication successful - generate tokens
           const accessToken = await generateAccessToken(user.id!, user.email, env);
           const refreshToken = generateRefreshToken();
 
-          // Calculate refresh token expiration (30 days from now)
-          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+          // Calculate refresh token expiration
+          const expiresAt = new Date(Date.now() + CONFIG.REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
           const expiresAtISO = expiresAt.toISOString();
 
           // Store refresh token in database
@@ -962,20 +856,12 @@ export default {
 
           console.log(`Login successful for user ID ${user.id}`);
 
-          return new Response(JSON.stringify(response), {
-            status: 200,
-            headers
-          });
+          return successResponse(response, headers);
 
         } catch (error) {
           // Log error details server-side but don't expose to client
           console.error('Login error:', error);
-          return new Response(JSON.stringify({
-            error: 'Internal server error during login'
-          }), {
-            status: 500,
-            headers
-          });
+          return errorResponse('Internal server error during login', 500, headers);
         }
       }
 
@@ -993,12 +879,7 @@ export default {
         // Extract the access token from Authorization header
         const authHeader = request.headers.get('Authorization');
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
-          return new Response(JSON.stringify({
-            error: 'Token extraction failed'
-          }), {
-            status: 500,
-            headers
-          });
+          return errorResponse('Token extraction failed', 500, headers);
         }
         const token = authHeader.substring(7); // Remove "Bearer " prefix
 
@@ -1035,13 +916,7 @@ export default {
           if (body && Object.keys(body).length > 0) {
             const validation = validateLogoutInput(body);
             if (!validation.valid) {
-              return new Response(JSON.stringify({
-                error: 'Validation failed',
-                message: validation.error
-              }), {
-                status: 400,
-                headers
-              });
+              return validationErrorResponse(validation.error!, headers);
             }
             validatedData = validation.data || {};
           }
@@ -1058,21 +933,11 @@ export default {
             console.log(`User ${user.userId} logged out - access token blacklisted`);
           }
 
-          return new Response(JSON.stringify({
-            message: 'Logged out successfully'
-          }), {
-            status: 200,
-            headers
-          });
+          return successResponse({ message: 'Logged out successfully' }, headers);
 
         } catch (error) {
           console.error('Logout error:', error);
-          return new Response(JSON.stringify({
-            error: 'Internal server error during logout'
-          }), {
-            status: 500,
-            headers
-          });
+          return errorResponse('Internal server error during logout', 500, headers);
         }
       }
 
@@ -1082,24 +947,12 @@ export default {
 
         // Validate Content-Type header (return 415 for wrong content type)
         if (!validateContentType(request)) {
-          return new Response(JSON.stringify({
-            error: 'Unsupported Media Type',
-            message: 'Content-Type must be application/json'
-          }), {
-            status: 415,
-            headers
-          });
+          return unsupportedMediaTypeResponse(headers);
         }
 
         // Check request size to prevent DoS attacks
         if (!checkRequestSize(request)) {
-          return new Response(JSON.stringify({
-            error: 'Payload Too Large',
-            message: 'Request body must be 10KB or less'
-          }), {
-            status: 413,
-            headers
-          });
+          return payloadTooLargeResponse(headers);
         }
 
         // Parse request body
@@ -1107,25 +960,13 @@ export default {
         try {
           body = await request.json();
         } catch (error) {
-          return new Response(JSON.stringify({
-            error: 'Invalid JSON',
-            message: 'Request body must be valid JSON'
-          }), {
-            status: 400,
-            headers
-          });
+          return invalidJsonResponse(headers);
         }
 
         // Comprehensive input validation
         const validation = validateRefreshInput(body);
         if (!validation.valid) {
-          return new Response(JSON.stringify({
-            error: 'Validation failed',
-            message: validation.error
-          }), {
-            status: 400,
-            headers
-          });
+          return validationErrorResponse(validation.error!, headers);
         }
 
         // Extract validated data
@@ -1140,12 +981,7 @@ export default {
           // Check if token exists
           if (!tokenRecord) {
             console.log('Refresh token not found');
-            return new Response(JSON.stringify({
-              error: 'Invalid refresh token'
-            }), {
-              status: 401,
-              headers
-            });
+            return errorResponse('Invalid refresh token', 401, headers);
           }
 
           // Check if token has expired
@@ -1157,12 +993,7 @@ export default {
             ).bind(refreshToken).run();
 
             console.log('Refresh token expired and deleted');
-            return new Response(JSON.stringify({
-              error: 'Refresh token expired'
-            }), {
-              status: 401,
-              headers
-            });
+            return errorResponse('Refresh token expired', 401, headers);
           }
 
           // Fetch user information to generate new access token
@@ -1173,12 +1004,7 @@ export default {
           if (!user) {
             // User doesn't exist (shouldn't happen, but handle gracefully)
             console.log('User not found for refresh token');
-            return new Response(JSON.stringify({
-              error: 'Invalid refresh token'
-            }), {
-              status: 401,
-              headers
-            });
+            return errorResponse('Invalid refresh token', 401, headers);
           }
 
           // Generate new access token for the user
@@ -1196,8 +1022,8 @@ export default {
           // 2. Generate new refresh token
           const newRefreshToken = generateRefreshToken();
 
-          // 3. Calculate new expiration (30 days from now)
-          const newExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+          // 3. Calculate new expiration
+          const newExpiresAt = new Date(Date.now() + CONFIG.REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
           const newExpiresAtISO = newExpiresAt.toISOString();
 
           // 4. Store new refresh token in database
@@ -1208,22 +1034,14 @@ export default {
           console.log(`Tokens rotated for user ${user.id}`);
 
           // 5. Return BOTH access token and NEW refresh token
-          return new Response(JSON.stringify({
+          return successResponse({
             accessToken,
             refreshToken: newRefreshToken  // Client must update stored refresh token
-          }), {
-            status: 200,
-            headers
-          });
+          }, headers);
 
         } catch (error) {
           console.error('Refresh token error:', error);
-          return new Response(JSON.stringify({
-            error: 'Internal server error during token refresh'
-          }), {
-            status: 500,
-            headers
-          });
+          return errorResponse('Internal server error during token refresh', 500, headers);
         }
       }
 
@@ -1248,7 +1066,7 @@ export default {
         const offsetParam = url.searchParams.get('offset');
 
         // Default pagination values
-        let limit = 50; // Default page size
+        let limit = CONFIG.DEFAULT_PAGE_SIZE;
         let offset = 0;
 
         // Validate and parse limit parameter
@@ -1263,8 +1081,8 @@ export default {
               headers
             });
           }
-          // Cap maximum limit at 100 to prevent abuse
-          limit = Math.min(parsedLimit, 100);
+          // Cap maximum limit to prevent abuse
+          limit = Math.min(parsedLimit, CONFIG.MAX_PAGE_SIZE);
         }
 
         // Validate and parse offset parameter
@@ -1295,7 +1113,7 @@ export default {
         const total = countResult?.total || 0;
 
         // Return paginated response with metadata
-        return new Response(JSON.stringify({
+        return successResponse({
           todos: results,
           pagination: {
             limit,
@@ -1303,7 +1121,7 @@ export default {
             total,
             hasMore: offset + limit < total
           }
-        }), { headers });
+        }, headers);
       }
 
       // POST /todos - Create a new todo for authenticated user
@@ -1319,24 +1137,12 @@ export default {
 
         // Validate Content-Type header
         if (!validateContentType(request)) {
-          return new Response(JSON.stringify({
-            error: 'Unsupported Media Type',
-            message: 'Content-Type must be application/json'
-          }), {
-            status: 415,
-            headers
-          });
+          return unsupportedMediaTypeResponse(headers);
         }
 
         // Check request size
         if (!checkRequestSize(request)) {
-          return new Response(JSON.stringify({
-            error: 'Payload Too Large',
-            message: 'Request body must be 10KB or less'
-          }), {
-            status: 413,
-            headers
-          });
+          return payloadTooLargeResponse(headers);
         }
 
         // Parse request body
@@ -1344,25 +1150,13 @@ export default {
         try {
           body = await request.json();
         } catch (error) {
-          return new Response(JSON.stringify({
-            error: 'Invalid JSON',
-            message: 'Request body must be valid JSON'
-          }), {
-            status: 400,
-            headers
-          });
+          return invalidJsonResponse(headers);
         }
 
         // Comprehensive input validation
         const validation = validateTodoInput(body, false);
         if (!validation.valid) {
-          return new Response(JSON.stringify({
-            error: 'Validation failed',
-            message: validation.error
-          }), {
-            status: 400,
-            headers
-          });
+          return validationErrorResponse(validation.error!, headers);
         }
 
         const validatedData = validation.data!;
@@ -1384,10 +1178,7 @@ export default {
           .bind(result.meta.last_row_id)
           .first<Todo>();
 
-        return new Response(JSON.stringify(todo), {
-          status: 201,
-          headers
-        });
+        return createdResponse(todo, headers);
       }
 
       // GET /todos/:id - Get a specific todo for authenticated user
@@ -1413,13 +1204,10 @@ export default {
           .first<Todo>();
 
         if (!todo) {
-          return new Response(JSON.stringify({ error: 'Todo not found' }), {
-            status: 404,
-            headers
-          });
+          return notFoundResponse('Todo not found', headers);
         }
 
-        return new Response(JSON.stringify(todo), { headers });
+        return successResponse(todo, headers);
       }
 
       // PUT /todos/:id - Update a todo for authenticated user
@@ -1438,24 +1226,12 @@ export default {
 
         // Validate Content-Type header
         if (!validateContentType(request)) {
-          return new Response(JSON.stringify({
-            error: 'Unsupported Media Type',
-            message: 'Content-Type must be application/json'
-          }), {
-            status: 415,
-            headers
-          });
+          return unsupportedMediaTypeResponse(headers);
         }
 
         // Check request size
         if (!checkRequestSize(request)) {
-          return new Response(JSON.stringify({
-            error: 'Payload Too Large',
-            message: 'Request body must be 10KB or less'
-          }), {
-            status: 413,
-            headers
-          });
+          return payloadTooLargeResponse(headers);
         }
 
         // Parse request body
@@ -1463,25 +1239,13 @@ export default {
         try {
           body = await request.json();
         } catch (error) {
-          return new Response(JSON.stringify({
-            error: 'Invalid JSON',
-            message: 'Request body must be valid JSON'
-          }), {
-            status: 400,
-            headers
-          });
+          return invalidJsonResponse(headers);
         }
 
         // Comprehensive input validation (isUpdate = true makes title optional)
         const validation = validateTodoInput(body, true);
         if (!validation.valid) {
-          return new Response(JSON.stringify({
-            error: 'Validation failed',
-            message: validation.error
-          }), {
-            status: 400,
-            headers
-          });
+          return validationErrorResponse(validation.error!, headers);
         }
 
         const validatedData = validation.data!;
@@ -1495,10 +1259,7 @@ export default {
           .first<Todo>();
 
         if (!existing) {
-          return new Response(JSON.stringify({ error: 'Todo not found' }), {
-            status: 404,
-            headers
-          });
+          return notFoundResponse('Todo not found', headers);
         }
 
         // Update todo with validated data
@@ -1521,7 +1282,7 @@ export default {
           .bind(id, user.userId)
           .first<Todo>();
 
-        return new Response(JSON.stringify(updated), { headers });
+        return successResponse(updated, headers);
       }
 
       // DELETE /todos/:id - Delete a todo for authenticated user
@@ -1547,10 +1308,7 @@ export default {
           .first<Todo>();
 
         if (!existing) {
-          return new Response(JSON.stringify({ error: 'Todo not found' }), {
-            status: 404,
-            headers
-          });
+          return notFoundResponse('Todo not found', headers);
         }
 
         // Delete todo with user_id filter to ensure user isolation
@@ -1558,24 +1316,17 @@ export default {
           .bind(id, user.userId)
           .run();
 
-        return new Response(JSON.stringify({ message: 'Todo deleted successfully' }), {
-          headers
-        });
+        return successResponse({ message: 'Todo deleted successfully' }, headers);
       }
 
-      return new Response(JSON.stringify({ error: 'Not Found' }), {
-        status: 404,
-        headers: getSecurityHeaders(request, env)
-      });
+      return notFoundResponse('Not Found', getSecurityHeaders(request, env));
 
     } catch (error) {
-      return new Response(JSON.stringify({
-        error: 'Internal Server Error',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      }), {
-        status: 500,
-        headers: getSecurityHeaders(request, env)
-      });
+      return errorResponse(
+        error instanceof Error ? error.message : 'Unknown error',
+        500,
+        getSecurityHeaders(request, env)
+      );
     }
   },
 };
