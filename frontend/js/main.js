@@ -6,6 +6,13 @@
  */
 
 import { CONFIG } from './config.js';
+import { authState } from './services/auth-state.js';
+
+// Import all components
+import './components/register-form.js';
+import './components/login-form.js';
+import './components/logout-button.js';
+import './components/auth-container.js';
 
 /**
  * Global error handler for uncaught errors
@@ -48,6 +55,40 @@ function hideLoadingState() {
 }
 
 /**
+ * Render UI based on authentication state
+ */
+function renderUI() {
+    const routerOutlet = document.getElementById('router-outlet');
+    if (!routerOutlet) return;
+
+    if (authState.getIsAuthenticated()) {
+        // User is authenticated - show welcome message with logout button
+        const user = authState.getCurrentUser();
+        routerOutlet.innerHTML = `
+            <div class="fade-in max-w-2xl mx-auto text-center py-12">
+                <h2 class="text-3xl font-bold text-gray-900 mb-4">
+                    Welcome, ${user.email}!
+                </h2>
+                <p class="text-gray-600 mb-8">
+                    You are successfully logged in.
+                </p>
+                <div class="bg-green-50 border border-green-200 rounded-lg p-6 mb-8">
+                    <p class="text-green-800">
+                        <strong>Phase 3 & 4 Complete!</strong><br>
+                        Authentication components and state management are working.<br>
+                        Next: Todo components (Phase 5).
+                    </p>
+                </div>
+                <logout-button variant="primary"></logout-button>
+            </div>
+        `;
+    } else {
+        // User is not authenticated - show auth container
+        routerOutlet.innerHTML = '<auth-container mode="login"></auth-container>';
+    }
+}
+
+/**
  * Initialize application
  */
 async function initializeApp() {
@@ -69,41 +110,21 @@ async function initializeApp() {
         // Hide initial loading state
         hideLoadingState();
 
-        // Show a temporary welcome message until components are loaded
-        const routerOutlet = document.getElementById('router-outlet');
-        if (routerOutlet) {
-            routerOutlet.innerHTML = `
-                <div class="fade-in max-w-2xl mx-auto text-center py-12">
-                    <h2 class="text-3xl font-bold text-gray-900 mb-4">
-                        Welcome to Todo App
-                    </h2>
-                    <p class="text-lg text-gray-600 mb-8">
-                        A modern todo application with authentication
-                    </p>
-                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-                        <p class="text-blue-800">
-                            <strong>Phase 1 Complete!</strong><br>
-                            Project structure and configuration are ready.<br>
-                            Next: API client and authentication components.
-                        </p>
-                    </div>
-                    <div class="space-y-2 text-sm text-gray-500">
-                        <p>✅ HTML structure with Tailwind CSS</p>
-                        <p>✅ Configuration system</p>
-                        <p>✅ Error handling</p>
-                        <p>✅ Accessibility features</p>
-                    </div>
-                </div>
-            `;
-        }
+        // Initialize authentication state
+        console.log('Initializing authentication state...');
+        authState.initialize();
+
+        // Subscribe to auth state changes
+        authState.subscribe((state) => {
+            console.log('Auth state changed:', state);
+            // Re-render UI when auth state changes
+            renderUI();
+        });
+
+        // Render initial UI based on auth state
+        renderUI();
 
         console.log('✅ Application initialized successfully');
-
-        // In future phases, this is where we will:
-        // 1. Load web component definitions
-        // 2. Initialize auth state manager
-        // 3. Set up router
-        // 4. Render initial route
 
     } catch (error) {
         console.error('Failed to initialize application:', error);
