@@ -107,10 +107,10 @@ export function validateTodoTitle(title) {
   }
 
   // Check maximum length
-  if (trimmedTitle.length > CONFIG.VALIDATION.TITLE_MAX_LENGTH) {
+  if (trimmedTitle.length > CONFIG.VALIDATION.TODO_TITLE_MAX_LENGTH) {
     return {
       valid: false,
-      error: `Title must not exceed ${CONFIG.VALIDATION.TITLE_MAX_LENGTH} characters`
+      error: `Title must not exceed ${CONFIG.VALIDATION.TODO_TITLE_MAX_LENGTH} characters`
     };
   }
 
@@ -132,10 +132,10 @@ export function validateTodoDescription(description) {
   const trimmedDescription = description.trim();
 
   // Check maximum length
-  if (trimmedDescription.length > CONFIG.VALIDATION.DESCRIPTION_MAX_LENGTH) {
+  if (trimmedDescription.length > CONFIG.VALIDATION.TODO_DESCRIPTION_MAX_LENGTH) {
     return {
       valid: false,
-      error: `Description must not exceed ${CONFIG.VALIDATION.DESCRIPTION_MAX_LENGTH} characters`
+      error: `Description must not exceed ${CONFIG.VALIDATION.TODO_DESCRIPTION_MAX_LENGTH} characters`
     };
   }
 

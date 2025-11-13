@@ -54,17 +54,9 @@
 
     <!-- Application root -->
     <div id="app" class="min-h-screen flex flex-col">
-        <!-- Header will be inserted here by app-root component -->
-        <header id="app-header" class="bg-white shadow-sm">
-            <!-- Placeholder while components load -->
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-                <div class="flex items-center justify-between">
-                    <h1 class="text-2xl font-bold text-gray-900">Todo App</h1>
-                    <div class="flex items-center space-x-4">
-                        <span class="text-sm text-gray-500">Loading...</span>
-                    </div>
-                </div>
-            </div>
+        <!-- Header will be rendered by app-header component -->
+        <header id="app-header">
+            <!-- App header component will be rendered here by main.js -->
         </header>
 
         <!-- Main content area -->

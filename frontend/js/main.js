@@ -7,12 +7,19 @@
 
 import { CONFIG } from './config.js';
 import { authState } from './services/auth-state.js';
+import { router } from './router.js';
 
 // Import all components
 import './components/register-form.js';
 import './components/login-form.js';
 import './components/logout-button.js';
 import './components/auth-container.js';
+import './components/app-header.js';
+import './components/todo-item.js';
+import './components/todo-list.js';
+import './components/todo-form.js';
+import './components/protected-route.js';
+import './components/todo-page.js';
 
 /**
  * Global error handler for uncaught errors
@@ -55,37 +62,59 @@ function hideLoadingState() {
 }
 
 /**
- * Render UI based on authentication state
+ * Render app header
  */
-function renderUI() {
-    const routerOutlet = document.getElementById('router-outlet');
-    if (!routerOutlet) return;
-
-    if (authState.getIsAuthenticated()) {
-        // User is authenticated - show welcome message with logout button
-        const user = authState.getCurrentUser();
-        routerOutlet.innerHTML = `
-            <div class="fade-in max-w-2xl mx-auto text-center py-12">
-                <h2 class="text-3xl font-bold text-gray-900 mb-4">
-                    Welcome, ${user.email}!
-                </h2>
-                <p class="text-gray-600 mb-8">
-                    You are successfully logged in.
-                </p>
-                <div class="bg-green-50 border border-green-200 rounded-lg p-6 mb-8">
-                    <p class="text-green-800">
-                        <strong>Phase 3 & 4 Complete!</strong><br>
-                        Authentication components and state management are working.<br>
-                        Next: Todo components (Phase 5).
-                    </p>
-                </div>
-                <logout-button variant="primary"></logout-button>
-            </div>
-        `;
-    } else {
-        // User is not authenticated - show auth container
-        routerOutlet.innerHTML = '<auth-container mode="login"></auth-container>';
+function renderHeader() {
+    const appHeader = document.getElementById('app-header');
+    if (appHeader) {
+        appHeader.innerHTML = '<app-header></app-header>';
     }
+}
+
+/**
+ * Set up router routes
+ */
+function setupRouter() {
+    // Default route - redirect based on auth state
+    router.addRoute('/', () => {
+        if (authState.getIsAuthenticated()) {
+            router.navigate('/todos');
+        } else {
+            router.navigate('/login');
+        }
+    });
+
+    // Login route
+    router.addRoute('/login', () => {
+        if (authState.getIsAuthenticated()) {
+            router.navigate('/todos');
+            return;
+        }
+        const outlet = document.getElementById('router-outlet');
+        if (outlet) {
+            outlet.innerHTML = '<auth-container mode="login"></auth-container>';
+        }
+    });
+
+    // Register route
+    router.addRoute('/register', () => {
+        if (authState.getIsAuthenticated()) {
+            router.navigate('/todos');
+            return;
+        }
+        const outlet = document.getElementById('router-outlet');
+        if (outlet) {
+            outlet.innerHTML = '<auth-container mode="register"></auth-container>';
+        }
+    });
+
+    // Todos route (protected)
+    router.addRoute('/todos', () => {
+        const outlet = document.getElementById('router-outlet');
+        if (outlet) {
+            outlet.innerHTML = '<protected-route><todo-page></todo-page></protected-route>';
+        }
+    }, true);
 }
 
 /**
@@ -114,15 +143,34 @@ async function initializeApp() {
         console.log('Initializing authentication state...');
         authState.initialize();
 
+        // Render app header
+        console.log('Rendering app header...');
+        renderHeader();
+
+        // Set up router
+        console.log('Setting up router...');
+        setupRouter();
+
         // Subscribe to auth state changes
         authState.subscribe((state) => {
             console.log('Auth state changed:', state);
-            // Re-render UI when auth state changes
-            renderUI();
+
+            // Navigate based on auth state
+            if (state.isAuthenticated) {
+                // User logged in - navigate to todos
+                router.navigate('/todos');
+            } else {
+                // User logged out - navigate to login
+                const currentPath = router.getCurrentPath();
+                if (currentPath === '/todos') {
+                    router.navigate('/login');
+                }
+            }
         });
 
-        // Render initial UI based on auth state
-        renderUI();
+        // Start router (this will handle initial route)
+        console.log('Starting router...');
+        router.start();
 
         console.log('✅ Application initialized successfully');
 
