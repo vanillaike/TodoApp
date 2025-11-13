@@ -4,7 +4,7 @@
  * Form to create new todos with validation and error handling.
  */
 
-import { todoApi } from '../services/todo-api.js';
+import { createTodo } from '../services/todo-api.js';
 import { validateTodoTitle, validateTodoDescription } from '../utils/validators.js';
 import { CONFIG } from '../config.js';
 
@@ -77,16 +77,18 @@ class TodoForm extends HTMLElement {
     this.render();
 
     try {
-      const newTodo = await todoApi.createTodo({
-        title: title,
-        description: description || undefined
-      });
+      const response = await createTodo(title, description || '');
 
-      // Dispatch success event
+      // Check if creation was successful
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to create todo');
+      }
+
+      // Dispatch success event with the todo data
       this.dispatchEvent(new CustomEvent('todo-created', {
         bubbles: true,
         composed: true,
-        detail: { todo: newTodo }
+        detail: { todo: response.data }
       }));
 
       // Clear form

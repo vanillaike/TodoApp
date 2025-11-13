@@ -12,7 +12,7 @@ import { validateEmail } from '../utils/validators.js';
 class LoginForm extends HTMLElement {
   constructor() {
     super();
-    this.attachShadow({ mode: 'open' });
+    
   }
 
   connectedCallback() {
@@ -22,16 +22,15 @@ class LoginForm extends HTMLElement {
 
   disconnectedCallback() {
     // Clean up event listeners
-    const form = this.shadowRoot.querySelector('form');
+    const form = this.querySelector('form');
     if (form) {
       form.removeEventListener('submit', this.handleSubmit);
     }
   }
 
   render() {
-    this.shadowRoot.innerHTML = `
+    this.innerHTML = `
       <style>
-        @import url('https://cdn.tailwindcss.com');
 
         /* Additional component-specific styles */
         .error-message {
@@ -136,8 +135,8 @@ class LoginForm extends HTMLElement {
   }
 
   attachEventListeners() {
-    const form = this.shadowRoot.getElementById('login-form');
-    const switchButton = this.shadowRoot.getElementById('switch-to-register');
+    const form = this.querySelector('#login-form');
+    const switchButton = this.querySelector('#switch-to-register');
 
     // Handle form submission
     form.addEventListener('submit', this.handleSubmit.bind(this));
@@ -166,8 +165,8 @@ class LoginForm extends HTMLElement {
     this.clearErrors();
 
     // Get form values
-    const email = this.shadowRoot.getElementById('email').value.trim();
-    const password = this.shadowRoot.getElementById('password').value;
+    const email = this.querySelector('#email').value.trim();
+    const password = this.querySelector('#password').value;
 
     // Validate email
     const emailValidation = validateEmail(email);
@@ -214,15 +213,15 @@ class LoginForm extends HTMLElement {
   }
 
   showError(message) {
-    const errorDiv = this.shadowRoot.getElementById('general-error');
-    const errorText = this.shadowRoot.getElementById('general-error-text');
+    const errorDiv = this.querySelector('#general-error');
+    const errorText = this.querySelector('#general-error-text');
     errorText.textContent = message;
     errorDiv.classList.add('show');
   }
 
   showFieldError(fieldId, message) {
-    const input = this.shadowRoot.getElementById(fieldId);
-    const errorElement = this.shadowRoot.getElementById(`${fieldId}-error`);
+    const input = this.querySelector(`#${fieldId}`);
+    const errorElement = this.querySelector(`#${fieldId}-error`);
 
     if (input && errorElement) {
       input.classList.add('input-error');
@@ -232,8 +231,8 @@ class LoginForm extends HTMLElement {
   }
 
   clearFieldError(fieldId) {
-    const input = this.shadowRoot.getElementById(fieldId);
-    const errorElement = this.shadowRoot.getElementById(`${fieldId}-error`);
+    const input = this.querySelector(`#${fieldId}`);
+    const errorElement = this.querySelector(`#${fieldId}-error`);
 
     if (input && errorElement) {
       input.classList.remove('input-error');
@@ -244,28 +243,28 @@ class LoginForm extends HTMLElement {
 
   clearErrors() {
     // Clear general error
-    const errorDiv = this.shadowRoot.getElementById('general-error');
+    const errorDiv = this.querySelector('#general-error');
     errorDiv.classList.remove('show');
 
     // Clear field errors
-    const errorElements = this.shadowRoot.querySelectorAll('.error-message');
+    const errorElements = this.querySelectorAll('.error-message');
     errorElements.forEach(el => {
       el.classList.remove('show');
       el.textContent = '';
     });
 
     // Remove error styling from inputs
-    const inputs = this.shadowRoot.querySelectorAll('input');
+    const inputs = this.querySelectorAll('input');
     inputs.forEach(input => {
       input.classList.remove('input-error');
     });
   }
 
   showLoading(isLoading) {
-    const submitButton = this.shadowRoot.getElementById('submit-button');
-    const buttonText = this.shadowRoot.getElementById('button-text');
-    const spinner = this.shadowRoot.getElementById('spinner');
-    const form = this.shadowRoot.getElementById('login-form');
+    const submitButton = this.querySelector('#submit-button');
+    const buttonText = this.querySelector('#button-text');
+    const spinner = this.querySelector('#spinner');
+    const form = this.querySelector('#login-form');
 
     if (isLoading) {
       submitButton.disabled = true;

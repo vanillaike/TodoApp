@@ -4,7 +4,7 @@
  * Displays list of todos with pagination, loading, and error states.
  */
 
-import { todoApi } from '../services/todo-api.js';
+import { getTodos } from '../services/todo-api.js';
 import { CONFIG } from '../config.js';
 import './todo-item.js';
 
@@ -49,25 +49,40 @@ class TodoList extends HTMLElement {
    * @param {boolean} append - Whether to append to existing todos
    */
   async fetchTodos(append = false) {
+    // Ensure pagination exists
+    if (!this.pagination) {
+      this.pagination = {
+        limit: CONFIG.PAGINATION.DEFAULT_PAGE_SIZE,
+        offset: 0,
+        total: 0,
+        hasMore: false
+      };
+    }
+
     this.isLoading = true;
     this.error = null;
     this.render();
 
     try {
-      const response = await todoApi.getTodos({
-        limit: this.pagination.limit,
-        offset: append ? this.pagination.offset : 0
-      });
+      const response = await getTodos(
+        this.pagination.limit,
+        append ? this.pagination.offset : 0
+      );
+
+      // Check if fetch was successful
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to load todos');
+      }
 
       // Update todos
       if (append) {
-        this.todos = [...this.todos, ...response.todos];
+        this.todos = [...(this.todos || []), ...response.data.todos];
       } else {
-        this.todos = response.todos;
+        this.todos = response.data.todos;
       }
 
       // Update pagination
-      this.pagination = response.pagination;
+      this.pagination = response.data.pagination;
 
     } catch (error) {
       console.error('Failed to fetch todos:', error);
@@ -92,6 +107,14 @@ class TodoList extends HTMLElement {
    * Handle load more button click
    */
   handleLoadMore() {
+    if (!this.pagination) {
+      this.pagination = {
+        limit: CONFIG.PAGINATION.DEFAULT_PAGE_SIZE,
+        offset: 0,
+        total: 0,
+        hasMore: false
+      };
+    }
     this.pagination.offset += this.pagination.limit;
     this.fetchTodos(true);
   }
@@ -100,6 +123,14 @@ class TodoList extends HTMLElement {
    * Handle retry button click
    */
   handleRetry() {
+    if (!this.pagination) {
+      this.pagination = {
+        limit: CONFIG.PAGINATION.DEFAULT_PAGE_SIZE,
+        offset: 0,
+        total: 0,
+        hasMore: false
+      };
+    }
     this.pagination.offset = 0;
     this.fetchTodos();
   }
@@ -108,6 +139,21 @@ class TodoList extends HTMLElement {
    * Render the component
    */
   render() {
+    // Ensure todos array exists
+    if (!this.todos) {
+      this.todos = [];
+    }
+
+    // Ensure pagination object exists
+    if (!this.pagination) {
+      this.pagination = {
+        limit: CONFIG.PAGINATION.DEFAULT_PAGE_SIZE,
+        offset: 0,
+        total: 0,
+        hasMore: false
+      };
+    }
+
     this.shadowRoot.innerHTML = `
       <style>
         :host {
@@ -326,6 +372,11 @@ class TodoList extends HTMLElement {
    * @returns {string} HTML for content
    */
   renderContent() {
+    // Ensure todos array exists
+    if (!this.todos) {
+      this.todos = [];
+    }
+
     // Loading state (initial load)
     if (this.isLoading && this.todos.length === 0) {
       return `
@@ -388,7 +439,8 @@ class TodoList extends HTMLElement {
    * @returns {string} HTML for pagination
    */
   renderPagination() {
-    if (!this.pagination.hasMore || this.isLoading || this.error) {
+    // Ensure pagination exists
+    if (!this.pagination || !this.pagination.hasMore || this.isLoading || this.error) {
       return '';
     }
 

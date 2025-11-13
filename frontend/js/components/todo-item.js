@@ -5,7 +5,7 @@
  * Implements optimistic UI updates.
  */
 
-import { todoApi } from '../services/todo-api.js';
+import { toggleTodoCompleted, deleteTodo } from '../services/todo-api.js';
 
 /**
  * Todo Item Component
@@ -78,7 +78,7 @@ class TodoItem extends HTMLElement {
 
     try {
       // Call API
-      await todoApi.toggleTodoCompleted(todo.id);
+      await toggleTodoCompleted(todo.id);
 
       // Dispatch event
       this.dispatchEvent(new CustomEvent('todo-toggled', {
@@ -119,7 +119,7 @@ class TodoItem extends HTMLElement {
 
     try {
       // Call API
-      await todoApi.deleteTodo(todo.id);
+      await deleteTodo(todo.id);
 
       // Dispatch event
       this.dispatchEvent(new CustomEvent('todo-deleted', {

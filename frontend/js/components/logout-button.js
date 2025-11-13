@@ -10,7 +10,6 @@ import { authState } from '../services/auth-state.js';
 class LogoutButton extends HTMLElement {
   constructor() {
     super();
-    this.attachShadow({ mode: 'open' });
   }
 
   static get observedAttributes() {
@@ -24,7 +23,7 @@ class LogoutButton extends HTMLElement {
 
   disconnectedCallback() {
     // Clean up event listeners
-    const button = this.shadowRoot.querySelector('button');
+    const button = this.querySelector('button');
     if (button) {
       button.removeEventListener('click', this.handleLogout);
     }
@@ -44,11 +43,9 @@ class LogoutButton extends HTMLElement {
       ? 'bg-gray-600 hover:bg-gray-700 focus:ring-gray-500'
       : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500';
 
-    this.shadowRoot.innerHTML = `
+    this.innerHTML = `
       <style>
-        @import url('https://cdn.tailwindcss.com');
-
-        .spinner {
+        .logout-spinner {
           border: 2px solid #f3f4f6;
           border-top: 2px solid currentColor;
           border-radius: 50%;
@@ -79,7 +76,7 @@ class LogoutButton extends HTMLElement {
   }
 
   attachEventListeners() {
-    const button = this.shadowRoot.getElementById('logout-button');
+    const button = this.querySelector('#logout-button');
     button.addEventListener('click', this.handleLogout.bind(this));
   }
 
@@ -111,9 +108,9 @@ class LogoutButton extends HTMLElement {
   }
 
   showLoading(isLoading) {
-    const button = this.shadowRoot.getElementById('logout-button');
-    const buttonText = this.shadowRoot.getElementById('button-text');
-    const spinner = this.shadowRoot.getElementById('spinner');
+    const button = this.querySelector('#logout-button');
+    const buttonText = this.querySelector('#button-text');
+    const spinner = this.querySelector('#spinner');
 
     if (isLoading) {
       button.disabled = true;
