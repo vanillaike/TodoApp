@@ -78,7 +78,7 @@ class LoginForm extends HTMLElement {
                 name="email"
                 required
                 autocomplete="email"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 placeholder="you@example.com"
               />
               <p class="error-message text-sm text-red-600 mt-1" id="email-error"></p>
@@ -95,7 +95,7 @@ class LoginForm extends HTMLElement {
                 name="password"
                 required
                 autocomplete="current-password"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 placeholder="Enter your password"
               />
               <p class="error-message text-sm text-red-600 mt-1" id="password-error"></p>
@@ -110,7 +110,7 @@ class LoginForm extends HTMLElement {
             <button
               type="submit"
               id="submit-button"
-              class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors duration-200 flex items-center justify-center"
+              class="w-full bg-primary-600 text-white py-2 px-4 rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-colors duration-200 flex items-center justify-center"
             >
               <span id="button-text">Log In</span>
               <div class="spinner hidden ml-2" id="spinner"></div>
@@ -123,7 +123,7 @@ class LoginForm extends HTMLElement {
               Don't have an account?
               <button
                 id="switch-to-register"
-                class="text-blue-600 hover:text-blue-800 font-medium focus:outline-none focus:underline"
+                class="text-primary-600 hover:text-primary-800 font-medium focus:outline-none focus:underline"
               >
                 Sign up
               </button>

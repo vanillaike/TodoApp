@@ -41,7 +41,7 @@ class LogoutButton extends HTMLElement {
     // Determine button styles based on variant
     const buttonClasses = variant === 'secondary'
       ? 'bg-gray-600 hover:bg-gray-700 focus:ring-gray-500'
-      : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500';
+      : 'bg-primary-600 hover:bg-primary-700 focus:ring-primary-500';
 
     this.innerHTML = `
       <style>
@@ -70,7 +70,7 @@ class LogoutButton extends HTMLElement {
         class="${buttonClasses} text-white py-2 px-6 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors duration-200 flex items-center justify-center"
       >
         <span id="button-text">Log Out</span>
-        <div class="spinner hidden ml-2" id="spinner"></div>
+        <div class="logout-spinner hidden ml-2" id="spinner"></div>
       </button>
     `;
   }
