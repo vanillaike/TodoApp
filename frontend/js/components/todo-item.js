@@ -6,6 +6,7 @@
  */
 
 import { toggleTodoCompleted, deleteTodo } from '../services/todo-api.js';
+import { showConfirmDialog } from './confirm-dialog.js';
 
 /**
  * Todo Item Component
@@ -109,8 +110,16 @@ class TodoItem extends HTMLElement {
 
     const todo = this.getTodoData();
 
-    // Confirm deletion
-    if (!confirm(`Are you sure you want to delete "${todo.title}"?`)) {
+    // Confirm deletion with custom dialog
+    const confirmed = await showConfirmDialog({
+      title: 'Delete Todo',
+      message: `Are you sure you want to delete "${todo.title}"? This action cannot be undone.`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'danger'
+    });
+
+    if (!confirmed) {
       return;
     }
 

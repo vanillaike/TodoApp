@@ -10,6 +10,7 @@ import { authState } from './services/auth-state.js';
 import { router } from './router.js';
 
 // Import all components
+import './components/confirm-dialog.js';
 import './components/register-form.js';
 import './components/login-form.js';
 import './components/logout-button.js';
