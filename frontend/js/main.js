@@ -72,6 +72,18 @@ function renderHeader() {
 }
 
 /**
+ * Set up error boundary handlers
+ */
+function setupErrorBoundaryHandlers() {
+    const reloadBtn = document.getElementById('error-reload-btn');
+    if (reloadBtn) {
+        reloadBtn.addEventListener('click', () => {
+            window.location.reload();
+        });
+    }
+}
+
+/**
  * Set up router routes
  */
 function setupRouter() {
@@ -150,6 +162,10 @@ async function initializeApp() {
         // Set up router
         console.log('Setting up router...');
         setupRouter();
+
+        // Set up error boundary handlers
+        console.log('Setting up error boundary handlers...');
+        setupErrorBoundaryHandlers();
 
         // Subscribe to auth state changes
         authState.subscribe((state) => {

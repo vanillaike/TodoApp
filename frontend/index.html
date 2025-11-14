@@ -9,42 +9,27 @@
     <!-- Content Security Policy -->
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self';
-                   script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
+                   script-src 'self' 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE=' https://cdn.tailwindcss.com;
                    style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
                    font-src 'self';
-                   connect-src 'self' http://localhost:8787 https://*.workers.dev;">
+                   connect-src 'self' http://localhost:8787 https://*.workers.dev;
+                   img-src 'self' data: https:;
+                   object-src 'none';
+                   base-uri 'self';
+                   form-action 'self';
+                   frame-ancestors 'none';
+                   upgrade-insecure-requests;">
 
     <title>Todo App - Authentication</title>
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 
+    <!-- Tailwind Configuration (external file to avoid CSP unsafe-inline) -->
+    <script src="./js/tailwind-config.js"></script>
+
     <!-- Custom styles -->
     <link rel="stylesheet" href="./styles.css">
-
-    <!-- Tailwind Configuration -->
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        primary: {
-                            50: '#eff6ff',
-                            100: '#dbeafe',
-                            200: '#bfdbfe',
-                            300: '#93c5fd',
-                            400: '#60a5fa',
-                            500: '#3b82f6',
-                            600: '#2563eb',
-                            700: '#1d4ed8',
-                            800: '#1e40af',
-                            900: '#1e3a8a',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
 </head>
 <body class="bg-gray-50 min-h-screen">
     <!-- Skip to main content link for accessibility -->
@@ -90,7 +75,7 @@
             <p id="error-message" class="text-gray-700 mb-4">
                 An unexpected error occurred. Please refresh the page to try again.
             </p>
-            <button onclick="window.location.reload()"
+            <button id="error-reload-btn"
                     class="w-full bg-primary-600 text-white px-4 py-2 rounded hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">
                 Reload Page
             </button>

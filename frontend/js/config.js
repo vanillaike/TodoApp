@@ -127,3 +127,13 @@ Object.freeze(CONFIG.PAGINATION);
 Object.freeze(CONFIG.UI);
 Object.freeze(CONFIG.ROUTES);
 Object.freeze(CONFIG.ENVIRONMENT);
+
+/**
+ * HTTPS Enforcement for Production
+ * Redirects HTTP to HTTPS in production environment
+ * Does NOT redirect in development (localhost)
+ */
+if (isProduction && window.location.protocol === 'http:') {
+    console.warn('🔒 Redirecting to HTTPS for security...');
+    window.location.href = window.location.href.replace('http:', 'https:');
+}
