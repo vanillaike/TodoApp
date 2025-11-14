@@ -18,7 +18,7 @@ const isProduction = window.location.hostname !== 'localhost' &&
  * - Production: Deployed Cloudflare Workers URL (update this after deployment)
  */
 const API_BASE_URL = isProduction
-    ? 'https://todo-api.REPLACE-WITH-YOUR-WORKERS-SUBDOMAIN.workers.dev'
+    ? 'https://todo-api.vanillaike.workers.dev'
     : 'http://localhost:8787';
 
 /**
