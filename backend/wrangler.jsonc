@@ -16,7 +16,7 @@
 			"database_name": "todo-db",
 			"database_id": "f9c2f5eb-2f25-4d05-9642-d0431583519b"
 		}
-	]
+	],
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
@@ -32,10 +32,29 @@
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
-	// "vars": { "MY_VARIABLE": "production_value" }
+	"vars": {
+		// JWT_SECRET configuration:
+		// - Local development: Add JWT_SECRET to .dev.vars file (not committed to git)
+		// - Production: Use `wrangler secret put JWT_SECRET` to set encrypted secret
+		// - Staging: Use `wrangler secret put JWT_SECRET --env staging`
+		// Secret should be cryptographically strong (minimum 32 bytes)
+		// See SECRETS_SETUP.md for detailed instructions
+
+		// ALLOWED_ORIGINS configuration:
+		// - Comma-separated list of allowed origins for CORS
+		// - Example: "https://yourdomain.com,https://app.yourdomain.com"
+		// - Leave empty or omit for development (allows localhost)
+		// - For production, set via wrangler.jsonc or environment variable
+		"ALLOWED_ORIGINS": ""
+	}
 	/**
-	 * Note: Use secrets to store sensitive data.
+	 * Secrets Management
+	 * Sensitive data like JWT_SECRET should NEVER be hardcoded here.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
+	 *
+	 * For local development: Create a .dev.vars file with JWT_SECRET
+	 * For production deployment: Use `wrangler secret put JWT_SECRET`
+	 * See SECRETS_SETUP.md for complete setup instructions
 	 */
 	/**
 	 * Static Assets

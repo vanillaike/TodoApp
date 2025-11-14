@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="description" content="Todo application with authentication">
+
+    <!-- Content Security Policy -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   script-src 'self' 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE=' https://cdn.tailwindcss.com;
+                   style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;
+                   font-src 'self';
+                   connect-src 'self' http://localhost:8787 https://*.workers.dev;
+                   img-src 'self' data: https:;
+                   object-src 'none';
+                   base-uri 'self';
+                   form-action 'self';
+                   frame-ancestors 'none';
+                   upgrade-insecure-requests;">
+
+    <title>Todo App - Authentication</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Tailwind Configuration (external file to avoid CSP unsafe-inline) -->
+    <script src="./js/tailwind-config.js"></script>
+
+    <!-- Custom styles -->
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Skip to main content link for accessibility -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary-600 focus:text-white focus:rounded">
+        Skip to main content
+    </a>
+
+    <!-- Application root -->
+    <div id="app" class="min-h-screen flex flex-col">
+        <!-- Header will be rendered by app-header component -->
+        <header id="app-header">
+            <!-- App header component will be rendered here by main.js -->
+        </header>
+
+        <!-- Main content area -->
+        <main id="main-content" class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <!-- Dynamic content will be inserted here by router and components -->
+            <div id="router-outlet" class="space-y-6">
+                <!-- Loading state -->
+                <div class="flex items-center justify-center py-12">
+                    <div class="text-center">
+                        <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+                        <p class="mt-4 text-gray-600">Loading application...</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="bg-white border-t border-gray-200 mt-auto">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                <p class="text-center text-sm text-gray-500">
+                    Built with vanilla web components and Tailwind CSS
+                </p>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Error boundary fallback (hidden by default) -->
+    <div id="error-boundary" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg shadow-xl p-6 max-w-md mx-4">
+            <h2 class="text-xl font-bold text-red-600 mb-4">Something went wrong</h2>
+            <p id="error-message" class="text-gray-700 mb-4">
+                An unexpected error occurred. Please refresh the page to try again.
+            </p>
+            <button id="error-reload-btn"
+                    class="w-full bg-primary-600 text-white px-4 py-2 rounded hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2">
+                Reload Page
+            </button>
+        </div>
+    </div>
+
+    <!-- Main application bootstrap -->
+    <script type="module" src="./js/main.js"></script>
+</body>
+</html>
