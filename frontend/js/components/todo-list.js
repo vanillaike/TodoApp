@@ -40,8 +40,8 @@ class TodoList extends HTMLElement {
     this.fetchTodos();
 
     // Listen to todo events for real-time updates
-    this.addEventListener('todo-toggled', () => this.handleTodoUpdate());
-    this.addEventListener('todo-deleted', () => this.handleTodoUpdate());
+    this.addEventListener('todo-toggled', (e) => this.handleTodoToggled(e));
+    this.addEventListener('todo-deleted', (e) => this.handleTodoDeleted(e));
   }
 
   /**
@@ -94,13 +94,37 @@ class TodoList extends HTMLElement {
   }
 
   /**
-   * Handle todo update (refresh list)
+   * Handle todo toggled event
+   * @param {CustomEvent} event - Todo toggled event
    */
-  handleTodoUpdate() {
-    // Refresh the list after a short delay to allow animation
-    setTimeout(() => {
-      this.fetchTodos();
-    }, 300);
+  handleTodoToggled(event) {
+    const { todoId, completed } = event.detail;
+
+    // Update the todo in the local array (optimistic update)
+    const todo = this.todos.find(t => t.id === todoId);
+    if (todo) {
+      todo.completed = completed;
+      // No need to re-render - the todo-item component handles its own display
+    }
+  }
+
+  /**
+   * Handle todo deleted event
+   * @param {CustomEvent} event - Todo deleted event
+   */
+  handleTodoDeleted(event) {
+    const { todoId } = event.detail;
+
+    // Remove the todo from the local array
+    this.todos = this.todos.filter(t => t.id !== todoId);
+
+    // Update the total count
+    if (this.pagination) {
+      this.pagination.total = Math.max(0, this.pagination.total - 1);
+    }
+
+    // Re-render to update the count badge and handle empty state
+    this.render();
   }
 
   /**

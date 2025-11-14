@@ -40,7 +40,7 @@ class TodoItem extends HTMLElement {
   /**
    * Attribute changed callback
    */
-  attributeChangedCallback(name, oldValue, newValue) {
+  attributeChangedCallback(_name, oldValue, newValue) {
     if (oldValue !== newValue) {
       this.render();
     }
