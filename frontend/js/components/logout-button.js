@@ -38,13 +38,61 @@ class LogoutButton extends HTMLElement {
   render() {
     const variant = this.getAttribute('variant') || 'primary';
 
-    // Determine button styles based on variant
-    const buttonClasses = variant === 'secondary'
-      ? 'bg-gray-600 hover:bg-gray-700 focus:ring-gray-500'
-      : 'bg-primary-600 hover:bg-primary-700 focus:ring-primary-500';
+    // Since this component is used in Shadow DOM (app-header), we need inline styles
+    // that match the header's nav-link styling
+    const buttonStyle = variant === 'secondary'
+      ? `
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: #4b5563;
+        background: none;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      `
+      : `
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: white;
+        background-color: #2563eb;
+        border: none;
+        padding: 0.5rem 1.5rem;
+        border-radius: 0.375rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      `;
 
     this.innerHTML = `
       <style>
+        #logout-button {
+          ${buttonStyle}
+        }
+
+        #logout-button:hover {
+          ${variant === 'secondary'
+            ? 'color: #2563eb; background-color: #eff6ff;'
+            : 'background-color: #1d4ed8;'
+          }
+        }
+
+        #logout-button:focus {
+          outline: 2px solid #2563eb;
+          outline-offset: 2px;
+        }
+
+        #logout-button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
         .logout-spinner {
           border: 2px solid #f3f4f6;
           border-top: 2px solid currentColor;
@@ -52,25 +100,22 @@ class LogoutButton extends HTMLElement {
           width: 16px;
           height: 16px;
           animation: spin 0.8s linear infinite;
+          display: inline-block;
+        }
+
+        .logout-spinner.hidden {
+          display: none;
         }
 
         @keyframes spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
-
-        button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
       </style>
 
-      <button
-        id="logout-button"
-        class="${buttonClasses} text-white py-2 px-6 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors duration-200 flex items-center justify-center"
-      >
+      <button id="logout-button">
         <span id="button-text">Log Out</span>
-        <div class="logout-spinner hidden ml-2" id="spinner"></div>
+        <span class="logout-spinner hidden" id="spinner"></span>
       </button>
     `;
   }
