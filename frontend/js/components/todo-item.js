@@ -1,12 +1,13 @@
 /**
  * Todo Item Component
  *
- * Individual todo item display with actions (toggle, delete).
- * Implements optimistic UI updates.
+ * Individual todo item display with actions (toggle, delete, edit).
+ * Implements optimistic UI updates and inline editing.
  */
 
-import { toggleTodoCompleted, deleteTodo } from '../services/todo-api.js';
+import { toggleTodoCompleted, deleteTodo, updateTodo } from '../services/todo-api.js';
 import { showConfirmDialog } from './confirm-dialog.js';
+import { CONFIG } from '../config.js';
 
 /**
  * Todo Item Component
@@ -28,6 +29,15 @@ class TodoItem extends HTMLElement {
 
     /** @type {boolean} */
     this.isLoading = false;
+
+    /** @type {boolean} */
+    this.isEditing = false;
+
+    /** @type {string} */
+    this.editTitle = '';
+
+    /** @type {string} */
+    this.editDescription = '';
   }
 
   /**
@@ -152,6 +162,146 @@ class TodoItem extends HTMLElement {
   }
 
   /**
+   * Handle edit button click
+   */
+  handleEdit() {
+    if (this.isLoading || this.isEditing) return;
+
+    const todo = this.getTodoData();
+
+    // Store current values for editing
+    this.editTitle = todo.title;
+    this.editDescription = todo.description;
+
+    // Enter edit mode
+    this.isEditing = true;
+    this.render();
+
+    // Focus on title input after render
+    setTimeout(() => {
+      const titleInput = this.shadowRoot.getElementById('edit-title');
+      if (titleInput) {
+        titleInput.focus();
+        titleInput.select();
+      }
+    }, 0);
+  }
+
+  /**
+   * Handle cancel edit
+   */
+  handleCancelEdit() {
+    this.isEditing = false;
+    this.editTitle = '';
+    this.editDescription = '';
+    this.render();
+  }
+
+  /**
+   * Handle save edit
+   */
+  async handleSaveEdit() {
+    if (this.isLoading) return;
+
+    const todo = this.getTodoData();
+
+    // Get input values
+    const titleInput = this.shadowRoot.getElementById('edit-title');
+    const descriptionInput = this.shadowRoot.getElementById('edit-description');
+
+    if (!titleInput) return;
+
+    const newTitle = titleInput.value.trim();
+    const newDescription = descriptionInput ? descriptionInput.value.trim() : '';
+
+    // Validate title
+    if (newTitle.length < CONFIG.VALIDATION.TODO_TITLE_MIN_LENGTH) {
+      this.showError(`Title must be at least ${CONFIG.VALIDATION.TODO_TITLE_MIN_LENGTH} character long.`);
+      titleInput.focus();
+      return;
+    }
+
+    if (newTitle.length > CONFIG.VALIDATION.TODO_TITLE_MAX_LENGTH) {
+      this.showError(`Title must not exceed ${CONFIG.VALIDATION.TODO_TITLE_MAX_LENGTH} characters.`);
+      titleInput.focus();
+      return;
+    }
+
+    // Validate description
+    if (newDescription.length > CONFIG.VALIDATION.TODO_DESCRIPTION_MAX_LENGTH) {
+      this.showError(`Description must not exceed ${CONFIG.VALIDATION.TODO_DESCRIPTION_MAX_LENGTH} characters.`);
+      if (descriptionInput) descriptionInput.focus();
+      return;
+    }
+
+    // Check if anything changed
+    if (newTitle === todo.title && newDescription === todo.description) {
+      // No changes, just exit edit mode
+      this.handleCancelEdit();
+      return;
+    }
+
+    this.isLoading = true;
+    this.render();
+
+    try {
+      // Build update object
+      const updates = {
+        title: newTitle,
+        description: newDescription
+      };
+
+      // Call API
+      const response = await updateTodo(todo.id, updates);
+
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to update todo');
+      }
+
+      // Update attributes with new values
+      this.setAttribute('title', newTitle);
+      this.setAttribute('description', newDescription);
+
+      // Exit edit mode
+      this.isEditing = false;
+      this.editTitle = '';
+      this.editDescription = '';
+
+      // Dispatch event
+      this.dispatchEvent(new CustomEvent('todo-updated', {
+        bubbles: true,
+        composed: true,
+        detail: { todoId: todo.id, todo: response.data }
+      }));
+
+    } catch (error) {
+      console.error('Failed to update todo:', error);
+      this.showError(error.message || 'Failed to update todo. Please try again.');
+    } finally {
+      this.isLoading = false;
+      this.render();
+    }
+  }
+
+  /**
+   * Handle Enter key in edit mode (save)
+   * @param {KeyboardEvent} event - Keyboard event
+   */
+  handleEditKeyDown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      // Save on Enter (but allow Shift+Enter for new lines in description)
+      if (event.target.id === 'edit-title') {
+        event.preventDefault();
+        this.handleSaveEdit();
+      }
+    } else if (event.key === 'Escape') {
+      // Cancel on Escape
+      event.preventDefault();
+      this.handleCancelEdit();
+    }
+  }
+
+  /**
    * Show error message
    * @param {string} message - Error message
    */
@@ -221,6 +371,11 @@ class TodoItem extends HTMLElement {
           pointer-events: none;
         }
 
+        .todo-item.editing {
+          border-color: #2563eb;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
         .checkbox-wrapper {
           flex-shrink: 0;
           padding-top: 0.125rem;
@@ -268,6 +423,68 @@ class TodoItem extends HTMLElement {
           white-space: pre-wrap;
         }
 
+        /* Edit Mode Styles */
+        .edit-form {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+          width: 100%;
+        }
+
+        .form-group {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .form-label {
+          font-size: 0.875rem;
+          font-weight: 500;
+          color: #374151;
+        }
+
+        .form-input,
+        .form-textarea {
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+          border: 1px solid #d1d5db;
+          border-radius: 0.375rem;
+          font-family: inherit;
+          transition: all 0.2s;
+        }
+
+        .form-input:focus,
+        .form-textarea:focus {
+          outline: none;
+          border-color: #2563eb;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .form-textarea {
+          resize: vertical;
+          min-height: 4rem;
+        }
+
+        .char-count {
+          font-size: 0.75rem;
+          color: #6b7280;
+          text-align: right;
+        }
+
+        .char-count.warning {
+          color: #f59e0b;
+        }
+
+        .char-count.error {
+          color: #dc2626;
+        }
+
+        .edit-actions {
+          display: flex;
+          gap: 0.5rem;
+          justify-content: flex-end;
+        }
+
         .actions {
           flex-shrink: 0;
           display: flex;
@@ -283,6 +500,9 @@ class TodoItem extends HTMLElement {
           cursor: pointer;
           transition: all 0.2s;
           background: none;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
         }
 
         .btn:disabled {
@@ -295,12 +515,38 @@ class TodoItem extends HTMLElement {
           outline-offset: 2px;
         }
 
+        .btn-edit {
+          color: #2563eb;
+        }
+
+        .btn-edit:hover:not(:disabled) {
+          background-color: #eff6ff;
+        }
+
         .btn-delete {
           color: #dc2626;
         }
 
         .btn-delete:hover:not(:disabled) {
           background-color: #fef2f2;
+        }
+
+        .btn-primary {
+          color: white;
+          background-color: #2563eb;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+          background-color: #1d4ed8;
+        }
+
+        .btn-secondary {
+          color: #374151;
+          background-color: #f3f4f6;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+          background-color: #e5e7eb;
         }
 
         .spinner {
@@ -331,44 +577,21 @@ class TodoItem extends HTMLElement {
             padding: 0.25rem 0.5rem;
             font-size: 0.8125rem;
           }
+
+          .edit-actions {
+            flex-direction: column;
+          }
+
+          .btn-primary,
+          .btn-secondary {
+            width: 100%;
+            justify-content: center;
+          }
         }
       </style>
 
-      <div class="todo-item ${this.isLoading ? 'loading' : ''}">
-        <!-- Checkbox -->
-        <div class="checkbox-wrapper">
-          <input
-            type="checkbox"
-            class="checkbox"
-            ${isCompleted ? 'checked' : ''}
-            ${this.isLoading ? 'disabled' : ''}
-            aria-label="${isCompleted ? 'Mark as incomplete' : 'Mark as complete'}"
-          >
-        </div>
-
-        <!-- Content -->
-        <div class="content">
-          <h3 class="title ${isCompleted ? 'completed' : ''}">${this.escapeHtml(todo.title)}</h3>
-          ${todo.description ? `<p class="description">${this.escapeHtml(todo.description)}</p>` : ''}
-        </div>
-
-        <!-- Actions -->
-        <div class="actions">
-          ${this.isLoading ? `
-            <div class="spinner" role="status" aria-label="Loading"></div>
-          ` : `
-            <button
-              class="btn btn-delete"
-              ${this.isLoading ? 'disabled' : ''}
-              aria-label="Delete todo"
-            >
-              <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
-                <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
-              </svg>
-            </button>
-          `}
-        </div>
+      <div class="todo-item ${this.isLoading ? 'loading' : ''} ${this.isEditing ? 'editing' : ''}">
+        ${this.isEditing ? this.renderEditMode(todo) : this.renderViewMode(todo, isCompleted)}
       </div>
     `;
 
@@ -377,18 +600,207 @@ class TodoItem extends HTMLElement {
   }
 
   /**
+   * Render view mode
+   * @param {Object} todo - Todo data
+   * @param {boolean} isCompleted - Whether todo is completed
+   * @returns {string} HTML for view mode
+   */
+  renderViewMode(todo, isCompleted) {
+    return `
+      <!-- Checkbox -->
+      <div class="checkbox-wrapper">
+        <input
+          type="checkbox"
+          class="checkbox"
+          ${isCompleted ? 'checked' : ''}
+          ${this.isLoading ? 'disabled' : ''}
+          aria-label="${isCompleted ? 'Mark as incomplete' : 'Mark as complete'}"
+        >
+      </div>
+
+      <!-- Content -->
+      <div class="content">
+        <h3 class="title ${isCompleted ? 'completed' : ''}">${this.escapeHtml(todo.title)}</h3>
+        ${todo.description ? `<p class="description">${this.escapeHtml(todo.description)}</p>` : ''}
+      </div>
+
+      <!-- Actions -->
+      <div class="actions">
+        ${this.isLoading ? `
+          <div class="spinner" role="status" aria-label="Loading"></div>
+        ` : `
+          <button
+            class="btn btn-edit"
+            aria-label="Edit todo"
+          >
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"/>
+              <path fill-rule="evenodd" d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5v11z"/>
+            </svg>
+          </button>
+          <button
+            class="btn btn-delete"
+            aria-label="Delete todo"
+          >
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+              <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+            </svg>
+          </button>
+        `}
+      </div>
+    `;
+  }
+
+  /**
+   * Render edit mode
+   * @param {Object} todo - Todo data
+   * @returns {string} HTML for edit mode
+   */
+  renderEditMode(todo) {
+    const titleLength = this.editTitle.length;
+    const descriptionLength = this.editDescription.length;
+    const titleMaxLength = CONFIG.VALIDATION.TODO_TITLE_MAX_LENGTH;
+    const descriptionMaxLength = CONFIG.VALIDATION.TODO_DESCRIPTION_MAX_LENGTH;
+
+    return `
+      <div class="content">
+        <form class="edit-form" id="edit-form">
+          <div class="form-group">
+            <label for="edit-title" class="form-label">Title *</label>
+            <input
+              type="text"
+              id="edit-title"
+              class="form-input"
+              value="${this.escapeHtml(this.editTitle)}"
+              maxlength="${titleMaxLength}"
+              required
+              ${this.isLoading ? 'disabled' : ''}
+              aria-label="Todo title"
+            >
+            <span class="char-count ${titleLength > titleMaxLength * 0.9 ? 'warning' : ''} ${titleLength >= titleMaxLength ? 'error' : ''}">
+              ${titleLength} / ${titleMaxLength}
+            </span>
+          </div>
+
+          <div class="form-group">
+            <label for="edit-description" class="form-label">Description</label>
+            <textarea
+              id="edit-description"
+              class="form-textarea"
+              maxlength="${descriptionMaxLength}"
+              ${this.isLoading ? 'disabled' : ''}
+              aria-label="Todo description"
+            >${this.escapeHtml(this.editDescription)}</textarea>
+            <span class="char-count ${descriptionLength > descriptionMaxLength * 0.9 ? 'warning' : ''} ${descriptionLength >= descriptionMaxLength ? 'error' : ''}">
+              ${descriptionLength} / ${descriptionMaxLength}
+            </span>
+          </div>
+
+          <div class="edit-actions">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              id="cancel-btn"
+              ${this.isLoading ? 'disabled' : ''}
+              aria-label="Cancel editing"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="btn btn-primary"
+              id="save-btn"
+              ${this.isLoading ? 'disabled' : ''}
+              aria-label="Save changes"
+            >
+              ${this.isLoading ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
+  /**
    * Attach event listeners
    */
   attachEventListeners() {
-    const checkbox = this.shadowRoot.querySelector('.checkbox');
-    const deleteBtn = this.shadowRoot.querySelector('.btn-delete');
+    if (this.isEditing) {
+      // Edit mode listeners
+      const editForm = this.shadowRoot.getElementById('edit-form');
+      const cancelBtn = this.shadowRoot.getElementById('cancel-btn');
+      const titleInput = this.shadowRoot.getElementById('edit-title');
+      const descriptionInput = this.shadowRoot.getElementById('edit-description');
 
-    if (checkbox) {
-      checkbox.addEventListener('change', () => this.handleToggle());
+      if (editForm) {
+        editForm.addEventListener('submit', (e) => {
+          e.preventDefault();
+          this.handleSaveEdit();
+        });
+      }
+
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => this.handleCancelEdit());
+      }
+
+      if (titleInput) {
+        titleInput.addEventListener('keydown', (e) => this.handleEditKeyDown(e));
+        titleInput.addEventListener('input', (e) => {
+          this.editTitle = e.target.value;
+          this.updateCharCount();
+        });
+      }
+
+      if (descriptionInput) {
+        descriptionInput.addEventListener('keydown', (e) => this.handleEditKeyDown(e));
+        descriptionInput.addEventListener('input', (e) => {
+          this.editDescription = e.target.value;
+          this.updateCharCount();
+        });
+      }
+    } else {
+      // View mode listeners
+      const checkbox = this.shadowRoot.querySelector('.checkbox');
+      const editBtn = this.shadowRoot.querySelector('.btn-edit');
+      const deleteBtn = this.shadowRoot.querySelector('.btn-delete');
+
+      if (checkbox) {
+        checkbox.addEventListener('change', () => this.handleToggle());
+      }
+
+      if (editBtn) {
+        editBtn.addEventListener('click', () => this.handleEdit());
+      }
+
+      if (deleteBtn) {
+        deleteBtn.addEventListener('click', () => this.handleDelete());
+      }
+    }
+  }
+
+  /**
+   * Update character count display
+   */
+  updateCharCount() {
+    const titleLength = this.editTitle.length;
+    const descriptionLength = this.editDescription.length;
+    const titleMaxLength = CONFIG.VALIDATION.TODO_TITLE_MAX_LENGTH;
+    const descriptionMaxLength = CONFIG.VALIDATION.TODO_DESCRIPTION_MAX_LENGTH;
+
+    const charCounts = this.shadowRoot.querySelectorAll('.char-count');
+    if (charCounts[0]) {
+      charCounts[0].textContent = `${titleLength} / ${titleMaxLength}`;
+      charCounts[0].className = 'char-count';
+      if (titleLength > titleMaxLength * 0.9) charCounts[0].classList.add('warning');
+      if (titleLength >= titleMaxLength) charCounts[0].classList.add('error');
     }
 
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', () => this.handleDelete());
+    if (charCounts[1]) {
+      charCounts[1].textContent = `${descriptionLength} / ${descriptionMaxLength}`;
+      charCounts[1].className = 'char-count';
+      if (descriptionLength > descriptionMaxLength * 0.9) charCounts[1].classList.add('warning');
+      if (descriptionLength >= descriptionMaxLength) charCounts[1].classList.add('error');
     }
   }
 
