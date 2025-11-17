@@ -243,7 +243,7 @@ class CategoryManager extends HTMLElement {
                 class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Category name"
                 maxlength="50"
-                value="${this.formData.name}"
+                value="${this.escapeHtml(this.formData.name)}"
                 data-edit-name
               />
             </div>
@@ -281,10 +281,10 @@ class CategoryManager extends HTMLElement {
         <div class="flex items-center gap-3">
           <div
             class="w-4 h-4 rounded-full"
-            style="background-color: ${category.color}"
+            style="background-color: ${this.sanitizeColor(category.color)}"
           ></div>
-          <span class="text-2xl">${category.icon}</span>
-          <span class="font-medium text-gray-900">${category.name}</span>
+          <span class="text-2xl">${this.escapeHtml(category.icon)}</span>
+          <span class="font-medium text-gray-900">${this.escapeHtml(category.name)}</span>
         </div>
         <div class="flex gap-2">
           <button
@@ -320,7 +320,7 @@ class CategoryManager extends HTMLElement {
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Category name"
               maxlength="50"
-              value="${this.formData.name}"
+              value="${this.escapeHtml(this.formData.name)}"
               data-add-name
             />
           </div>
@@ -377,7 +377,7 @@ class CategoryManager extends HTMLElement {
         <div class="flex-1 overflow-y-auto p-6">
           ${this.error ? `
             <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-              <p class="text-red-800">${this.error}</p>
+              <p class="text-red-800">${this.escapeHtml(this.error)}</p>
               <button
                 class="mt-2 text-sm text-red-600 hover:text-red-800 underline"
                 data-retry
@@ -435,10 +435,10 @@ class CategoryManager extends HTMLElement {
                     <div class="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 border border-gray-300 rounded-lg">
                       <div
                         class="w-3 h-3 rounded-full"
-                        style="background-color: ${cat.color}"
+                        style="background-color: ${this.sanitizeColor(cat.color)}"
                       ></div>
-                      <span class="text-xl">${cat.icon}</span>
-                      <span class="font-medium text-gray-700">${cat.name}</span>
+                      <span class="text-xl">${this.escapeHtml(cat.icon)}</span>
+                      <span class="font-medium text-gray-700">${this.escapeHtml(cat.name)}</span>
                     </div>
                   `).join('')}
                 </div>
@@ -579,6 +579,27 @@ class CategoryManager extends HTMLElement {
       }
     };
     document.addEventListener('keydown', handleEscape);
+  }
+
+  /**
+   * Escape HTML to prevent XSS attacks
+   * @param {string} text - Text to escape
+   * @returns {string} Escaped text
+   */
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /**
+   * Sanitize hex color to prevent CSS injection
+   * @param {string} color - Color value to sanitize
+   * @returns {string} Valid hex color or default blue
+   */
+  sanitizeColor(color) {
+    const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
+    return hexColorRegex.test(color) ? color : '#3B82F6';
   }
 }
 

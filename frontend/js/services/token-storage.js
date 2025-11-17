@@ -50,13 +50,14 @@ export function getRefreshToken() {
 
 /**
  * Clear all tokens from localStorage
- * Removes access token, refresh token, and user data
+ * Removes access token, refresh token, user data, and user email
  */
 export function clearTokens() {
   try {
     localStorage.removeItem(CONFIG.STORAGE_KEYS.ACCESS_TOKEN);
     localStorage.removeItem(CONFIG.STORAGE_KEYS.REFRESH_TOKEN);
     localStorage.removeItem(CONFIG.STORAGE_KEYS.USER_DATA);
+    localStorage.removeItem(CONFIG.STORAGE_KEYS.USER_EMAIL);
   } catch (error) {
     console.error('Error clearing tokens:', error);
   }
@@ -78,12 +79,41 @@ export function hasValidAccessToken() {
 }
 
 /**
+ * Save user email to localStorage
+ * @param {string} email - User email address
+ */
+export function saveUserEmail(email) {
+  try {
+    localStorage.setItem(CONFIG.STORAGE_KEYS.USER_EMAIL, email);
+  } catch (error) {
+    console.error('Error saving user email:', error);
+  }
+}
+
+/**
+ * Get user email from localStorage
+ * @returns {string|null} User email or null if not found
+ */
+export function getUserEmail() {
+  try {
+    return localStorage.getItem(CONFIG.STORAGE_KEYS.USER_EMAIL);
+  } catch (error) {
+    console.error('Error getting user email:', error);
+    return null;
+  }
+}
+
+/**
  * Save user data to localStorage
+ * @deprecated Use saveUserEmail instead
  * @param {object} user - User object with id and email
  */
 export function saveUserData(user) {
   try {
-    localStorage.setItem(CONFIG.STORAGE_KEYS.USER_DATA, JSON.stringify(user));
+    // Only save email for security
+    if (user && user.email) {
+      saveUserEmail(user.email);
+    }
   } catch (error) {
     console.error('Error saving user data:', error);
   }

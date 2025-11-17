@@ -30,10 +30,6 @@ export async function getCategories() {
             };
         }
 
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Fetched ${data.categories.length} categories`);
-        }
-
         return {
             success: true,
             data: data.categories
@@ -134,10 +130,6 @@ export async function createCategory(name, color, icon) {
                 success: false,
                 error: 'Invalid response from server.'
             };
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Created category #${data.id}: ${data.name}`);
         }
 
         return {
@@ -278,10 +270,6 @@ export async function updateCategory(id, updates) {
             };
         }
 
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Updated category #${categoryId}`);
-        }
-
         return {
             success: true,
             data: data
@@ -325,10 +313,6 @@ export async function deleteCategory(id) {
 
         if (!response.success) {
             return response;
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Deleted category #${categoryId}`);
         }
 
         return {

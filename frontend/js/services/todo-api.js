@@ -51,10 +51,6 @@ export async function getTodos(limit = CONFIG.PAGINATION.DEFAULT_PAGE_SIZE, offs
             };
         }
 
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Fetched ${data.todos.length} todos (limit: ${limit}, offset: ${offset})`);
-        }
-
         return {
             success: true,
             data: {
@@ -110,10 +106,6 @@ export async function getTodo(id) {
                 success: false,
                 error: 'Invalid response from server.'
             };
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Fetched todo #${todoId}`);
         }
 
         return {
@@ -214,10 +206,6 @@ export async function createTodo(title, description = '', categoryId = null) {
                 success: false,
                 error: 'Invalid response from server.'
             };
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Created todo #${data.id}: ${data.title}`);
         }
 
         return {
@@ -381,10 +369,6 @@ export async function updateTodo(id, updates) {
             };
         }
 
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Updated todo #${todoId}`);
-        }
-
         return {
             success: true,
             data: data
@@ -428,10 +412,6 @@ export async function deleteTodo(id) {
 
         if (!response.success) {
             return response;
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Deleted todo #${todoId}`);
         }
 
         return {
@@ -626,10 +606,6 @@ export async function getTodosByCategory(categoryId, limit = CONFIG.PAGINATION.D
                 success: false,
                 error: 'Invalid response from server.'
             };
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Fetched ${data.todos.length} todos for category #${parsedCategoryId} (limit: ${limit}, offset: ${offset})`);
         }
 
         return {

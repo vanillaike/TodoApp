@@ -105,7 +105,12 @@ export default {
         // Extract validated and normalized data
         const { email, password } = validation.data!;
 
-        // Check if email already exists
+        // SECURITY FIX: Hash password BEFORE checking email existence
+        // This prevents timing attacks that could enumerate valid email addresses
+        // Both code paths (existing/new email) now take similar time (~100-300ms for bcrypt)
+        const passwordHash = await hashPassword(password);
+
+        // Check if email already exists AFTER hashing
         const existingUser = await env.todo_db.prepare(
           'SELECT id FROM users WHERE email = ?'
         )
@@ -115,9 +120,6 @@ export default {
         if (existingUser) {
           return errorResponse('Email already exists', 409, headers);
         }
-
-        // Hash password
-        const passwordHash = await hashPassword(password);
 
         // Insert user into database
         const userResult = await env.todo_db.prepare(

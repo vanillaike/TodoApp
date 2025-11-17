@@ -37,7 +37,8 @@ export const CONFIG = {
     STORAGE_KEYS: {
         ACCESS_TOKEN: 'todo_app_access_token',
         REFRESH_TOKEN: 'todo_app_refresh_token',
-        USER_DATA: 'todo_app_user_data'
+        USER_DATA: 'todo_app_user_data', // Deprecated - kept for migration
+        USER_EMAIL: 'todo_app_user_email'
     },
 
     /**
