@@ -92,6 +92,80 @@ async function refreshToken(refreshToken: string) {
 	return { response, data };
 }
 
+/**
+ * Helper function to create a category with authentication
+ * @param token - Access token
+ * @param name - Category name
+ * @param color - Category color (hex)
+ * @param icon - Category icon (emoji)
+ * @returns Object with response and data
+ */
+async function createCategory(token: string, name: string, color: string, icon: string) {
+	const response = await SELF.fetch('https://example.com/categories', {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': `Bearer ${token}`
+		},
+		body: JSON.stringify({ name, color, icon })
+	});
+	const data = await response.json() as any;
+	return { response, data };
+}
+
+/**
+ * Helper function to list categories with authentication
+ * @param token - Access token
+ * @returns Object with response and data
+ */
+async function listCategories(token: string) {
+	const response = await SELF.fetch('https://example.com/categories', {
+		method: 'GET',
+		headers: {
+			'Authorization': `Bearer ${token}`
+		}
+	});
+	const data = await response.json() as any;
+	return { response, data };
+}
+
+/**
+ * Helper function to update a category with authentication
+ * @param token - Access token
+ * @param id - Category ID
+ * @param updates - Partial category updates
+ * @returns Object with response and data
+ */
+async function updateCategory(token: string, id: number, updates: any) {
+	const response = await SELF.fetch(`https://example.com/categories/${id}`, {
+		method: 'PUT',
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': `Bearer ${token}`
+		},
+		body: JSON.stringify(updates)
+	});
+	const data = await response.json() as any;
+	return { response, data };
+}
+
+/**
+ * Helper function to delete a category with authentication
+ * @param token - Access token
+ * @param id - Category ID
+ * @returns Object with response and data
+ */
+async function deleteCategory(token: string, id: number) {
+	const response = await SELF.fetch(`https://example.com/categories/${id}`, {
+		method: 'DELETE',
+		headers: {
+			'Authorization': `Bearer ${token}`
+		}
+	});
+	const data = await response.json() as any;
+	return { response, data };
+}
+
 // ============================================================================
 // TEST SUITE
 // ============================================================================
@@ -137,6 +211,21 @@ describe('Todo API with Authentication', () => {
 				description TEXT,
 				completed INTEGER DEFAULT 0,
 				user_id INTEGER,
+				category_id INTEGER,
+				created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+				updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+			)
+		`).run();
+
+		await env.todo_db.prepare(`
+			CREATE TABLE IF NOT EXISTS categories (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT NOT NULL,
+				color TEXT NOT NULL,
+				icon TEXT NOT NULL,
+				user_id INTEGER,
+				is_system INTEGER DEFAULT 0,
+				sort_order INTEGER DEFAULT 0,
 				created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 				updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 			)
@@ -148,6 +237,18 @@ describe('Todo API with Authentication', () => {
 		await env.todo_db.prepare('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id)').run();
 		await env.todo_db.prepare('CREATE INDEX IF NOT EXISTS idx_token_blacklist_token ON token_blacklist(token)').run();
 		await env.todo_db.prepare('CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id)').run();
+		await env.todo_db.prepare('CREATE INDEX IF NOT EXISTS idx_todos_category_id ON todos(category_id)').run();
+		await env.todo_db.prepare('CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id)').run();
+
+		// Seed system categories
+		await env.todo_db.prepare(`
+			INSERT INTO categories (name, color, icon, user_id, is_system, sort_order) VALUES
+				('Work', '#3B82F6', '📋', NULL, 1, 1),
+				('Personal', '#10B981', '🏠', NULL, 1, 2),
+				('Shopping', '#F59E0B', '🛒', NULL, 1, 3),
+				('Health', '#EF4444', '💪', NULL, 1, 4),
+				('Learning', '#8B5CF6', '📚', NULL, 1, 5)
+		`).run();
 	});
 
 	beforeEach(async () => {
@@ -156,6 +257,7 @@ describe('Todo API with Authentication', () => {
 		await env.todo_db.prepare('DELETE FROM todos').run();
 		await env.todo_db.prepare('DELETE FROM refresh_tokens').run();
 		await env.todo_db.prepare('DELETE FROM token_blacklist').run();
+		await env.todo_db.prepare('DELETE FROM categories WHERE is_system = 0').run(); // Only delete user categories
 		await env.todo_db.prepare('DELETE FROM users').run();
 	});
 
@@ -2070,6 +2172,1171 @@ describe('Todo API with Authentication', () => {
 			expect(response.status).toBe(404);
 			expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
 			expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+		});
+	});
+
+	// ========================================================================
+	// CATEGORY ENDPOINTS
+	// ========================================================================
+
+	describe('Category Endpoints', () => {
+		describe('GET /categories', () => {
+			it('should list system categories for authenticated user', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: categoriesData } = await listCategories(data.accessToken);
+
+				expect(response.status).toBe(200);
+				expect(categoriesData).toHaveProperty('categories');
+				expect(Array.isArray(categoriesData.categories)).toBe(true);
+				// Should have 5 system categories
+				expect(categoriesData.categories.length).toBe(5);
+
+				// Verify system categories are present
+				const categoryNames = categoriesData.categories.map((c: any) => c.name);
+				expect(categoryNames).toContain('Work');
+				expect(categoryNames).toContain('Personal');
+				expect(categoryNames).toContain('Shopping');
+				expect(categoryNames).toContain('Health');
+				expect(categoryNames).toContain('Learning');
+
+				// Verify all are system categories
+				categoriesData.categories.forEach((c: any) => {
+					expect(c.is_system).toBe(1);
+					expect(c.user_id).toBe(null);
+				});
+			});
+
+			it('should list system + user categories for authenticated user', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				// Create a user category
+				await createCategory(data.accessToken, 'Custom', '#FF0000', '🎨');
+
+				const { response, data: categoriesData } = await listCategories(data.accessToken);
+
+				expect(response.status).toBe(200);
+				expect(categoriesData.categories.length).toBe(6); // 5 system + 1 user
+
+				// Find the custom category
+				const customCategory = categoriesData.categories.find((c: any) => c.name === 'Custom');
+				expect(customCategory).toBeDefined();
+				expect(customCategory.is_system).toBe(0);
+				expect(customCategory.user_id).toBe(data.user.id);
+			});
+
+			it('should require authentication', async () => {
+				const response = await SELF.fetch('https://example.com/categories', {
+					method: 'GET'
+				});
+
+				expect(response.status).toBe(401);
+			});
+		});
+
+		describe('POST /categories', () => {
+			it('should create a category with valid input', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: categoryData } = await createCategory(
+					data.accessToken,
+					'Project',
+					'#3B82F6',
+					'📁'
+				);
+
+				expect(response.status).toBe(201);
+				expect(categoryData).toHaveProperty('id');
+				expect(categoryData.name).toBe('Project');
+				expect(categoryData.color).toBe('#3B82F6');
+				expect(categoryData.icon).toBe('📁');
+				expect(categoryData.user_id).toBe(data.user.id);
+				expect(categoryData.is_system).toBe(0);
+				expect(categoryData.sort_order).toBe(0);
+			});
+
+			it('should normalize color to uppercase', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: categoryData } = await createCategory(
+					data.accessToken,
+					'Test',
+					'#abcdef',
+					'🎨'
+				);
+
+				expect(response.status).toBe(201);
+				expect(categoryData.color).toBe('#ABCDEF');
+			});
+
+			it('should reject empty name', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: errorData } = await createCategory(
+					data.accessToken,
+					'',
+					'#3B82F6',
+					'📁'
+				);
+
+				expect(response.status).toBe(400);
+				expect(errorData.error).toBe('Validation failed');
+				expect(errorData.message).toContain('Name cannot be empty');
+			});
+
+			it('should reject name that is too long', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const longName = 'a'.repeat(51);
+				const { response, data: errorData } = await createCategory(
+					data.accessToken,
+					longName,
+					'#3B82F6',
+					'📁'
+				);
+
+				expect(response.status).toBe(400);
+				expect(errorData.error).toBe('Validation failed');
+				expect(errorData.message).toContain('Name must be 50 characters or less');
+			});
+
+			it('should reject invalid hex color format', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: errorData } = await createCategory(
+					data.accessToken,
+					'Test',
+					'red',
+					'📁'
+				);
+
+				expect(response.status).toBe(400);
+				expect(errorData.error).toBe('Validation failed');
+				expect(errorData.message).toContain('Color must be a valid hex color');
+			});
+
+			it('should reject color without hash', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: errorData } = await createCategory(
+					data.accessToken,
+					'Test',
+					'3B82F6',
+					'📁'
+				);
+
+				expect(response.status).toBe(400);
+				expect(errorData.error).toBe('Validation failed');
+				expect(errorData.message).toContain('Color must be a valid hex color');
+			});
+
+			it('should reject missing icon', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const response = await SELF.fetch('https://example.com/categories', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${data.accessToken}`
+					},
+					body: JSON.stringify({ name: 'Test', color: '#3B82F6' })
+				});
+
+				const errorData = await response.json() as any;
+				expect(response.status).toBe(400);
+				expect(errorData.error).toBe('Validation failed');
+				expect(errorData.message).toContain('Icon is required');
+			});
+
+			it('should require authentication', async () => {
+				const response = await SELF.fetch('https://example.com/categories', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ name: 'Test', color: '#3B82F6', icon: '📁' })
+				});
+
+				expect(response.status).toBe(401);
+			});
+		});
+
+		describe('PUT /categories/:id', () => {
+			it('should update a user category', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				// Create a category
+				const { data: created } = await createCategory(
+					data.accessToken,
+					'Original',
+					'#3B82F6',
+					'📁'
+				);
+
+				// Update it
+				const { response, data: updated } = await updateCategory(
+					data.accessToken,
+					created.id,
+					{ name: 'Updated', color: '#FF0000' }
+				);
+
+				expect(response.status).toBe(200);
+				expect(updated.id).toBe(created.id);
+				expect(updated.name).toBe('Updated');
+				expect(updated.color).toBe('#FF0000');
+				expect(updated.icon).toBe('📁'); // Unchanged
+			});
+
+			it('should support partial updates', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				// Create a category
+				const { data: created } = await createCategory(
+					data.accessToken,
+					'Test',
+					'#3B82F6',
+					'📁'
+				);
+
+				// Update only name
+				const { response, data: updated } = await updateCategory(
+					data.accessToken,
+					created.id,
+					{ name: 'NewName' }
+				);
+
+				expect(response.status).toBe(200);
+				expect(updated.name).toBe('NewName');
+				expect(updated.color).toBe('#3B82F6'); // Unchanged
+				expect(updated.icon).toBe('📁'); // Unchanged
+			});
+
+			it('should return 404 for non-existent category', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: errorData } = await updateCategory(
+					data.accessToken,
+					99999,
+					{ name: 'Updated' }
+				);
+
+				expect(response.status).toBe(404);
+				expect(errorData.error).toBe('Not Found');
+			});
+
+			it('should return 404 for category not owned by user', async () => {
+				const { data: user1 } = await registerUser('user1@example.com', 'password123');
+				const { data: user2 } = await registerUser('user2@example.com', 'password123');
+
+				// User 1 creates a category
+				const { data: created } = await createCategory(
+					user1.accessToken,
+					'User1Category',
+					'#3B82F6',
+					'📁'
+				);
+
+				// User 2 tries to update it
+				const { response, data: errorData } = await updateCategory(
+					user2.accessToken,
+					created.id,
+					{ name: 'Hacked' }
+				);
+
+				expect(response.status).toBe(404);
+				expect(errorData.error).toBe('Not Found');
+			});
+
+			it('should return 403 for system category', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				// Try to update system category (id 1 is 'Work')
+				const { response, data: errorData } = await updateCategory(
+					data.accessToken,
+					1,
+					{ name: 'HackedWork' }
+				);
+
+				expect(response.status).toBe(403);
+				expect(errorData.error).toBe('Cannot modify system categories');
+			});
+
+			it('should require authentication', async () => {
+				const response = await SELF.fetch('https://example.com/categories/1', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ name: 'Updated' })
+				});
+
+				expect(response.status).toBe(401);
+			});
+		});
+
+		describe('DELETE /categories/:id', () => {
+			it('should delete a user category', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				// Create a category
+				const { data: created } = await createCategory(
+					data.accessToken,
+					'ToDelete',
+					'#3B82F6',
+					'📁'
+				);
+
+				// Delete it
+				const { response, data: deleteData } = await deleteCategory(
+					data.accessToken,
+					created.id
+				);
+
+				expect(response.status).toBe(200);
+				expect(deleteData.message).toBe('Category deleted successfully');
+
+				// Verify it's gone
+				const { data: categories } = await listCategories(data.accessToken);
+				const found = categories.categories.find((c: any) => c.id === created.id);
+				expect(found).toBeUndefined();
+			});
+
+			it('should unassign todos when category is deleted', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				// Create a category
+				const { data: category } = await createCategory(
+					data.accessToken,
+					'ToDelete',
+					'#3B82F6',
+					'📁'
+				);
+
+				// Create a todo and assign it to the category
+				await env.todo_db.prepare(
+					'INSERT INTO todos (title, user_id, category_id) VALUES (?, ?, ?)'
+				).bind('Test Todo', data.user.id, category.id).run();
+
+				// Delete the category
+				await deleteCategory(data.accessToken, category.id);
+
+				// Verify todo's category_id is NULL
+				const todo = await env.todo_db.prepare(
+					'SELECT * FROM todos WHERE user_id = ?'
+				).bind(data.user.id).first() as any;
+
+				expect(todo.category_id).toBe(null);
+			});
+
+			it('should return 404 for non-existent category', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: errorData } = await deleteCategory(
+					data.accessToken,
+					99999
+				);
+
+				expect(response.status).toBe(404);
+				expect(errorData.error).toBe('Not Found');
+			});
+
+			it('should return 404 for category not owned by user', async () => {
+				const { data: user1 } = await registerUser('user1@example.com', 'password123');
+				const { data: user2 } = await registerUser('user2@example.com', 'password123');
+
+				// User 1 creates a category
+				const { data: created } = await createCategory(
+					user1.accessToken,
+					'User1Category',
+					'#3B82F6',
+					'📁'
+				);
+
+				// User 2 tries to delete it
+				const { response, data: errorData } = await deleteCategory(
+					user2.accessToken,
+					created.id
+				);
+
+				expect(response.status).toBe(404);
+				expect(errorData.error).toBe('Not Found');
+
+				// Verify it still exists for user 1
+				const { data: categories } = await listCategories(user1.accessToken);
+				const found = categories.categories.find((c: any) => c.id === created.id);
+				expect(found).toBeDefined();
+			});
+
+			it('should return 403 for system category', async () => {
+				const { data } = await registerUser('user@example.com', 'password123');
+
+				// Try to delete system category (id 1 is 'Work')
+				const { response, data: errorData } = await deleteCategory(
+					data.accessToken,
+					1
+				);
+
+				expect(response.status).toBe(403);
+				expect(errorData.error).toBe('Cannot delete system categories');
+
+				// Verify system category still exists
+				const { data: categories } = await listCategories(data.accessToken);
+				const work = categories.categories.find((c: any) => c.name === 'Work');
+				expect(work).toBeDefined();
+			});
+
+			it('should require authentication', async () => {
+				const response = await SELF.fetch('https://example.com/categories/1', {
+					method: 'DELETE'
+				});
+
+				expect(response.status).toBe(401);
+			});
+		});
+
+		describe('User Isolation', () => {
+			it('should not allow user to see other user categories', async () => {
+				const { data: user1 } = await registerUser('user1@example.com', 'password123');
+				const { data: user2 } = await registerUser('user2@example.com', 'password123');
+
+				// User 1 creates a category
+				await createCategory(user1.accessToken, 'User1Category', '#3B82F6', '📁');
+
+				// User 2 lists categories
+				const { data: categories } = await listCategories(user2.accessToken);
+
+				// Should only see system categories (5 total)
+				expect(categories.categories.length).toBe(5);
+				const user1Category = categories.categories.find((c: any) => c.name === 'User1Category');
+				expect(user1Category).toBeUndefined();
+			});
+		});
+	});
+
+	// ========================================================================
+	// TODO-CATEGORY INTEGRATION
+	// ========================================================================
+
+	describe('Todo-Category Integration', () => {
+		describe('POST /todos with category', () => {
+			it('should create todo with system category', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create todo with system category (Work, id 1)
+				const { response, data: todo } = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Work task',
+						category_id: 1
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(201);
+				expect(todo.title).toBe('Work task');
+				expect(todo.category_id).toBe(1);
+				expect(todo.category).toBeDefined();
+				expect(todo.category.id).toBe(1);
+				expect(todo.category.name).toBe('Work');
+				expect(todo.category.color).toBe('#3B82F6');
+				expect(todo.category.icon).toBe('📋');
+			});
+
+			it('should create todo with user-owned category', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create custom category
+				const { data: category } = await createCategory(
+					user.accessToken,
+					'Custom',
+					'#FF0000',
+					'🎯'
+				);
+
+				// Create todo with custom category
+				const { response, data: todo } = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Custom task',
+						category_id: category.id
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(201);
+				expect(todo.category_id).toBe(category.id);
+				expect(todo.category).toBeDefined();
+				expect(todo.category.name).toBe('Custom');
+			});
+
+			it('should create todo without category', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				const { response, data: todo } = await createTodo(
+					user.accessToken,
+					'No category task'
+				);
+
+				expect(response.status).toBe(201);
+				expect(todo.category_id).toBeNull();
+				expect(todo.category).toBeNull();
+			});
+
+			it('should reject invalid category_id', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				const { response, data } = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Task',
+						category_id: 9999
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(400);
+				expect(data.error).toBe('Category not found or access denied');
+			});
+
+			it('should reject another user category_id', async () => {
+				const { data: user1 } = await registerUser('user1@example.com', 'password123');
+				const { data: user2 } = await registerUser('user2@example.com', 'password123');
+
+				// User 1 creates a category
+				const { data: category } = await createCategory(
+					user1.accessToken,
+					'User1Category',
+					'#3B82F6',
+					'📁'
+				);
+
+				// User 2 tries to use it
+				const { response, data } = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user2.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Task',
+						category_id: category.id
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(400);
+				expect(data.error).toBe('Category not found or access denied');
+			});
+
+			it('should reject non-integer category_id', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				const { response, data } = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Task',
+						category_id: 'invalid'
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(400);
+				expect(data.error).toBe('Validation failed');
+				expect(data.message).toContain('Category ID must be an integer');
+			});
+
+			it('should reject negative category_id', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				const { response, data } = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Task',
+						category_id: -1
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(400);
+				expect(data.error).toBe('Validation failed');
+				expect(data.message).toContain('Category ID must be a positive integer');
+			});
+		});
+
+		describe('PUT /todos/:id with category', () => {
+			it('should update todo to add category', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create todo without category
+				const { data: todo } = await createTodo(user.accessToken, 'Task');
+
+				// Update to add category
+				const { response, data: updated } = await SELF.fetch(`https://example.com/todos/${todo.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						category_id: 1
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(200);
+				expect(updated.category_id).toBe(1);
+				expect(updated.category).toBeDefined();
+				expect(updated.category.name).toBe('Work');
+			});
+
+			it('should update todo to change category', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create todo with category
+				const createRes = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Task',
+						category_id: 1
+					})
+				});
+				const todo = await createRes.json();
+
+				// Change to different category
+				const { response, data: updated } = await SELF.fetch(`https://example.com/todos/${todo.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						category_id: 2
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(200);
+				expect(updated.category_id).toBe(2);
+				expect(updated.category.name).toBe('Personal');
+			});
+
+			it('should update todo to remove category', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create todo with category
+				const createRes = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Task',
+						category_id: 1
+					})
+				});
+				const todo = await createRes.json();
+
+				// Remove category
+				const { response, data: updated } = await SELF.fetch(`https://example.com/todos/${todo.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						category_id: null
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(200);
+				expect(updated.category_id).toBeNull();
+				expect(updated.category).toBeNull();
+			});
+
+			it('should reject invalid category_id on update', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+				const { data: todo } = await createTodo(user.accessToken, 'Task');
+
+				const { response, data } = await SELF.fetch(`https://example.com/todos/${todo.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						category_id: 9999
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(400);
+				expect(data.error).toBe('Category not found or access denied');
+			});
+
+			it('should reject another user category_id on update', async () => {
+				const { data: user1 } = await registerUser('user1@example.com', 'password123');
+				const { data: user2 } = await registerUser('user2@example.com', 'password123');
+
+				// User 1 creates category and todo
+				const { data: category } = await createCategory(
+					user1.accessToken,
+					'User1Category',
+					'#3B82F6',
+					'📁'
+				);
+				const { data: todo } = await createTodo(user2.accessToken, 'Task');
+
+				// User 2 tries to use user 1's category
+				const { response, data } = await SELF.fetch(`https://example.com/todos/${todo.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user2.accessToken}`
+					},
+					body: JSON.stringify({
+						category_id: category.id
+					})
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(400);
+				expect(data.error).toBe('Category not found or access denied');
+			});
+		});
+
+		describe('GET /todos with category data', () => {
+			it('should return todos with nested category object', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create todos with and without categories
+				await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ title: 'Work task', category_id: 1 })
+				});
+
+				await createTodo(user.accessToken, 'No category task');
+
+				// List todos
+				const { response, data } = await SELF.fetch('https://example.com/todos', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(200);
+				expect(data.todos).toHaveLength(2);
+
+				const workTodo = data.todos.find((t: any) => t.title === 'Work task');
+				expect(workTodo.category).toBeDefined();
+				expect(workTodo.category.name).toBe('Work');
+
+				const noCategoryTodo = data.todos.find((t: any) => t.title === 'No category task');
+				expect(noCategoryTodo.category).toBeNull();
+			});
+
+			it('should filter todos by category_id', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create todos in different categories
+				await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ title: 'Work task 1', category_id: 1 })
+				});
+
+				await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ title: 'Work task 2', category_id: 1 })
+				});
+
+				await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ title: 'Personal task', category_id: 2 })
+				});
+
+				// Filter by Work category
+				const { response, data } = await SELF.fetch('https://example.com/todos?category_id=1', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(200);
+				expect(data.todos).toHaveLength(2);
+				expect(data.pagination.total).toBe(2);
+				expect(data.todos.every((t: any) => t.category_id === 1)).toBe(true);
+			});
+
+			it('should reject invalid category_id filter', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				const { response, data } = await SELF.fetch('https://example.com/todos?category_id=invalid', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(400);
+				expect(data.error).toBe('Invalid category_id parameter');
+			});
+		});
+
+		describe('GET /todos/:id with category data', () => {
+			it('should return todo with nested category object', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create todo with category
+				const createRes = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ title: 'Work task', category_id: 1 })
+				});
+				const created = await createRes.json();
+
+				// Get todo by ID
+				const { response, data: todo } = await SELF.fetch(`https://example.com/todos/${created.id}`, {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(200);
+				expect(todo.category).toBeDefined();
+				expect(todo.category.id).toBe(1);
+				expect(todo.category.name).toBe('Work');
+				expect(todo.category.color).toBe('#3B82F6');
+				expect(todo.category.icon).toBe('📋');
+			});
+
+			it('should return todo with null category', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+				const { data: todo } = await createTodo(user.accessToken, 'No category task');
+
+				// Get todo by ID
+				const { response, data: fetched } = await SELF.fetch(`https://example.com/todos/${todo.id}`, {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				}).then(async (res) => ({ response: res, data: await res.json() }));
+
+				expect(response.status).toBe(200);
+				expect(fetched.category_id).toBeNull();
+				expect(fetched.category).toBeNull();
+			});
+		});
+
+		describe('Category deletion impact on todos', () => {
+			it('should set category_id to null when category is deleted', async () => {
+				const { data: user } = await registerUser('user@example.com', 'password123');
+
+				// Create custom category
+				const { data: category } = await createCategory(
+					user.accessToken,
+					'Custom',
+					'#FF0000',
+					'🎯'
+				);
+
+				// Create todo with that category
+				const createRes = await SELF.fetch('https://example.com/todos', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({
+						title: 'Task',
+						category_id: category.id
+					})
+				});
+				const todo = await createRes.json();
+
+				// Delete category
+				await deleteCategory(user.accessToken, category.id);
+
+				// Fetch todo - should have null category_id
+				const fetchRes = await SELF.fetch(`https://example.com/todos/${todo.id}`, {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				});
+				const fetched = await fetchRes.json();
+
+				expect(fetched.category_id).toBeNull();
+				expect(fetched.category).toBeNull();
+			});
+		});
+
+		describe('GET /categories/stats', () => {
+			it('should require authentication', async () => {
+				const response = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET'
+				});
+
+				expect(response.status).toBe(401);
+			});
+
+			it('should return stats for all categories with zero counts initially', async () => {
+				const { data: user } = await registerUser('stats1@example.com', 'password123');
+
+				const response = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				});
+
+				expect(response.status).toBe(200);
+				const data = await response.json();
+
+				// Should have stats array and uncategorized object
+				expect(data.stats).toBeDefined();
+				expect(Array.isArray(data.stats)).toBe(true);
+				expect(data.uncategorized).toBeDefined();
+
+				// System categories should exist with zero counts
+				expect(data.stats.length).toBeGreaterThanOrEqual(5);
+				data.stats.forEach((stat: any) => {
+					expect(stat).toHaveProperty('id');
+					expect(stat).toHaveProperty('name');
+					expect(stat).toHaveProperty('color');
+					expect(stat).toHaveProperty('icon');
+					expect(stat).toHaveProperty('is_system');
+					expect(stat).toHaveProperty('todo_count');
+					expect(stat).toHaveProperty('completed_count');
+					expect(stat.todo_count).toBe(0);
+					expect(stat.completed_count).toBe(0);
+				});
+
+				// Uncategorized should be zero
+				expect(data.uncategorized.todo_count).toBe(0);
+				expect(data.uncategorized.completed_count).toBe(0);
+			});
+
+			it('should return correct counts for categorized todos', async () => {
+				const { data: user } = await registerUser('stats2@example.com', 'password123');
+
+				// Get categories to find system category IDs
+				const { data: categoriesData } = await listCategories(user.accessToken);
+				const workCategory = categoriesData.categories.find((c: any) => c.name === 'Work');
+
+				// Create 3 todos in Work category (2 completed, 1 not completed)
+				await createTodo(user.accessToken, 'Work task 1');
+				const { data: todo1 } = await createTodo(user.accessToken, 'Work task 2');
+				const { data: todo2 } = await createTodo(user.accessToken, 'Work task 3');
+
+				// Update todos to add category and mark some completed
+				await SELF.fetch(`https://example.com/todos/${todo1.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ category_id: workCategory.id, completed: 1 })
+				});
+
+				await SELF.fetch(`https://example.com/todos/${todo2.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ category_id: workCategory.id, completed: 1 })
+				});
+
+				// Get stats
+				const response = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				});
+
+				expect(response.status).toBe(200);
+				const data = await response.json();
+
+				// Find Work category stats
+				const workStats = data.stats.find((s: any) => s.name === 'Work');
+				expect(workStats).toBeDefined();
+				expect(workStats.todo_count).toBe(2);
+				expect(workStats.completed_count).toBe(2);
+
+				// Uncategorized should have 1 todo (the first one we created)
+				expect(data.uncategorized.todo_count).toBe(1);
+				expect(data.uncategorized.completed_count).toBe(0);
+			});
+
+			it('should return correct counts for user custom categories', async () => {
+				const { data: user } = await registerUser('stats3@example.com', 'password123');
+
+				// Create custom category
+				const { data: customCategory } = await createCategory(
+					user.accessToken,
+					'Custom',
+					'#FF0000',
+					'🎯'
+				);
+
+				// Create todos with custom category
+				const { data: todo1 } = await createTodo(user.accessToken, 'Custom task 1');
+				const { data: todo2 } = await createTodo(user.accessToken, 'Custom task 2');
+
+				// Update todos to add category
+				await SELF.fetch(`https://example.com/todos/${todo1.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ category_id: customCategory.id, completed: 1 })
+				});
+
+				await SELF.fetch(`https://example.com/todos/${todo2.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ category_id: customCategory.id })
+				});
+
+				// Get stats
+				const response = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				});
+
+				expect(response.status).toBe(200);
+				const data = await response.json();
+
+				// Find custom category stats
+				const customStats = data.stats.find((s: any) => s.name === 'Custom');
+				expect(customStats).toBeDefined();
+				expect(customStats.todo_count).toBe(2);
+				expect(customStats.completed_count).toBe(1);
+				expect(customStats.is_system).toBe(0);
+			});
+
+			it('should isolate stats per user', async () => {
+				const { data: user1 } = await registerUser('stats4a@example.com', 'password123');
+				const { data: user2 } = await registerUser('stats4b@example.com', 'password123');
+
+				// Get Work category for user1
+				const { data: categories1 } = await listCategories(user1.accessToken);
+				const workCategory1 = categories1.categories.find((c: any) => c.name === 'Work');
+
+				// Create todos for user1
+				const { data: todo1 } = await createTodo(user1.accessToken, 'User1 task');
+				await SELF.fetch(`https://example.com/todos/${todo1.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user1.accessToken}`
+					},
+					body: JSON.stringify({ category_id: workCategory1.id })
+				});
+
+				// Get stats for user1
+				const response1 = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user1.accessToken}` }
+				});
+				const data1 = await response1.json();
+
+				// Get stats for user2
+				const response2 = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user2.accessToken}` }
+				});
+				const data2 = await response2.json();
+
+				// User1 should have 1 todo in Work category
+				const workStats1 = data1.stats.find((s: any) => s.name === 'Work');
+				expect(workStats1.todo_count).toBe(1);
+
+				// User2 should have 0 todos in Work category
+				const workStats2 = data2.stats.find((s: any) => s.name === 'Work');
+				expect(workStats2.todo_count).toBe(0);
+			});
+
+			it('should order stats by is_system DESC, sort_order ASC, name ASC', async () => {
+				const { data: user } = await registerUser('stats5@example.com', 'password123');
+
+				// Create multiple custom categories
+				await createCategory(user.accessToken, 'Zebra', '#FF0000', '🦓');
+				await createCategory(user.accessToken, 'Apple', '#00FF00', '🍎');
+
+				// Get stats
+				const response = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				});
+
+				const data = await response.json();
+
+				// System categories should come first
+				const systemCategories = data.stats.filter((s: any) => s.is_system === 1);
+				const userCategories = data.stats.filter((s: any) => s.is_system === 0);
+
+				expect(systemCategories.length).toBeGreaterThan(0);
+				expect(userCategories.length).toBe(2);
+
+				// First categories should be system
+				expect(data.stats[0].is_system).toBe(1);
+
+				// User categories should be alphabetically sorted
+				const userCategoryNames = userCategories.map((c: any) => c.name);
+				expect(userCategoryNames).toEqual(['Apple', 'Zebra']);
+			});
+
+			it('should include uncategorized count correctly', async () => {
+				const { data: user } = await registerUser('stats6@example.com', 'password123');
+
+				// Create uncategorized todos
+				await createTodo(user.accessToken, 'Uncategorized 1');
+				const { data: todo2 } = await createTodo(user.accessToken, 'Uncategorized 2');
+
+				// Mark one as completed
+				await SELF.fetch(`https://example.com/todos/${todo2.id}`, {
+					method: 'PUT',
+					headers: {
+						'Content-Type': 'application/json',
+						'Authorization': `Bearer ${user.accessToken}`
+					},
+					body: JSON.stringify({ completed: 1 })
+				});
+
+				// Get stats
+				const response = await SELF.fetch('https://example.com/categories/stats', {
+					method: 'GET',
+					headers: { 'Authorization': `Bearer ${user.accessToken}` }
+				});
+
+				const data = await response.json();
+
+				// Uncategorized should have 2 todos, 1 completed
+				expect(data.uncategorized.todo_count).toBe(2);
+				expect(data.uncategorized.completed_count).toBe(1);
+			});
 		});
 	});
 });

@@ -8,6 +8,8 @@
 import { toggleTodoCompleted, deleteTodo, updateTodo } from '../services/todo-api.js';
 import { showConfirmDialog } from './confirm-dialog.js';
 import { CONFIG } from '../config.js';
+import './category-badge.js';
+import './category-selector.js';
 
 /**
  * Todo Item Component
@@ -17,10 +19,12 @@ import { CONFIG } from '../config.js';
  * @attr {string} title - Todo title
  * @attr {string} description - Todo description (optional)
  * @attr {string} completed - Completed status (0 or 1)
+ * @attr {string} category - Category object as JSON string (optional)
  *
  * @fires todo-updated - When todo is updated
  * @fires todo-deleted - When todo is deleted
  * @fires todo-toggled - When todo is toggled
+ * @fires filter-by-category - When category badge is clicked
  */
 class TodoItem extends HTMLElement {
   constructor() {
@@ -38,25 +42,48 @@ class TodoItem extends HTMLElement {
 
     /** @type {string} */
     this.editDescription = '';
+
+    /** @type {number|null} */
+    this.editCategoryId = null;
+
+    /** @type {Object|null} */
+    this.category = null;
   }
 
   /**
    * Observed attributes
    */
   static get observedAttributes() {
-    return ['todo-id', 'title', 'description', 'completed'];
+    return ['todo-id', 'title', 'description', 'completed', 'category'];
   }
 
   /**
    * Attribute changed callback
    */
-  attributeChangedCallback(_name, oldValue, newValue) {
+  attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue !== newValue) {
+      // Parse category attribute if changed
+      if (name === 'category') {
+        try {
+          this.category = newValue ? JSON.parse(newValue) : null;
+        } catch (error) {
+          console.error('Invalid category JSON:', error);
+          this.category = null;
+        }
+      }
       this.render();
     }
   }
 
   connectedCallback() {
+    // Parse category attribute on initial connection
+    const categoryAttr = this.getAttribute('category');
+    try {
+      this.category = categoryAttr ? JSON.parse(categoryAttr) : null;
+    } catch (error) {
+      console.error('Invalid category JSON:', error);
+      this.category = null;
+    }
     this.render();
   }
 
@@ -69,7 +96,9 @@ class TodoItem extends HTMLElement {
       id: parseInt(this.getAttribute('todo-id'), 10),
       title: this.getAttribute('title') || '',
       description: this.getAttribute('description') || '',
-      completed: parseInt(this.getAttribute('completed'), 10) || 0
+      completed: parseInt(this.getAttribute('completed'), 10) || 0,
+      category: this.category,
+      category_id: this.category ? this.category.id : null
     };
   }
 
@@ -172,6 +201,7 @@ class TodoItem extends HTMLElement {
     // Store current values for editing
     this.editTitle = todo.title;
     this.editDescription = todo.description;
+    this.editCategoryId = todo.category_id;
 
     // Enter edit mode
     this.isEditing = true;
@@ -194,6 +224,7 @@ class TodoItem extends HTMLElement {
     this.isEditing = false;
     this.editTitle = '';
     this.editDescription = '';
+    this.editCategoryId = null;
     this.render();
   }
 
@@ -235,7 +266,7 @@ class TodoItem extends HTMLElement {
     }
 
     // Check if anything changed
-    if (newTitle === todo.title && newDescription === todo.description) {
+    if (newTitle === todo.title && newDescription === todo.description && this.editCategoryId === todo.category_id) {
       // No changes, just exit edit mode
       this.handleCancelEdit();
       return;
@@ -248,7 +279,8 @@ class TodoItem extends HTMLElement {
       // Build update object
       const updates = {
         title: newTitle,
-        description: newDescription
+        description: newDescription,
+        category_id: this.editCategoryId
       };
 
       // Call API
@@ -266,6 +298,7 @@ class TodoItem extends HTMLElement {
       this.isEditing = false;
       this.editTitle = '';
       this.editDescription = '';
+      this.editCategoryId = null;
 
       // Dispatch event
       this.dispatchEvent(new CustomEvent('todo-updated', {
@@ -386,6 +419,11 @@ class TodoItem extends HTMLElement {
           height: 1.25rem;
           cursor: pointer;
           accent-color: #2563eb;
+        }
+
+        .category-badge-wrapper {
+          flex-shrink: 0;
+          margin-right: 0.5rem;
         }
 
         .checkbox:disabled {
@@ -618,6 +656,16 @@ class TodoItem extends HTMLElement {
         >
       </div>
 
+      <!-- Category Badge (if category exists) -->
+      ${todo.category ? `
+        <category-badge
+          category='${JSON.stringify(todo.category)}'
+          size="small"
+          clickable
+          class="category-badge-wrapper"
+        ></category-badge>
+      ` : ''}
+
       <!-- Content -->
       <div class="content">
         <h3 class="title ${isCompleted ? 'completed' : ''}">${this.escapeHtml(todo.title)}</h3>
@@ -697,6 +745,14 @@ class TodoItem extends HTMLElement {
             </span>
           </div>
 
+          <div class="form-group">
+            <label for="edit-category-selector" class="form-label">Category</label>
+            <category-selector
+              id="edit-category-selector"
+              selected-id="${this.editCategoryId || ''}"
+            ></category-selector>
+          </div>
+
           <div class="edit-actions">
             <button
               type="button"
@@ -732,6 +788,7 @@ class TodoItem extends HTMLElement {
       const cancelBtn = this.shadowRoot.getElementById('cancel-btn');
       const titleInput = this.shadowRoot.getElementById('edit-title');
       const descriptionInput = this.shadowRoot.getElementById('edit-description');
+      const categorySelector = this.shadowRoot.getElementById('edit-category-selector');
 
       if (editForm) {
         editForm.addEventListener('submit', (e) => {
@@ -759,11 +816,18 @@ class TodoItem extends HTMLElement {
           this.updateCharCount();
         });
       }
+
+      if (categorySelector) {
+        categorySelector.addEventListener('category-selected', (e) => {
+          this.editCategoryId = e.detail.categoryId;
+        });
+      }
     } else {
       // View mode listeners
       const checkbox = this.shadowRoot.querySelector('.checkbox');
       const editBtn = this.shadowRoot.querySelector('.btn-edit');
       const deleteBtn = this.shadowRoot.querySelector('.btn-delete');
+      const categoryBadge = this.shadowRoot.querySelector('category-badge');
 
       if (checkbox) {
         checkbox.addEventListener('change', () => this.handleToggle());
@@ -775,6 +839,17 @@ class TodoItem extends HTMLElement {
 
       if (deleteBtn) {
         deleteBtn.addEventListener('click', () => this.handleDelete());
+      }
+
+      // Listen for category badge clicks
+      if (categoryBadge) {
+        categoryBadge.addEventListener('badge-clicked', (e) => {
+          this.dispatchEvent(new CustomEvent('filter-by-category', {
+            bubbles: true,
+            composed: true,
+            detail: { category: e.detail.category }
+          }));
+        });
       }
     }
   }

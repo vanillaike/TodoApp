@@ -141,12 +141,20 @@ class AppHeader extends HTMLElement {
           padding: 0.5rem 1rem;
           background-color: #f3f4f6;
           border-radius: 0.5rem;
+          position: relative;
         }
 
         .user-email {
           font-size: 0.875rem;
           color: #374151;
           font-weight: 500;
+        }
+
+        .user-icon {
+          display: none;
+          width: 1.5rem;
+          height: 1.5rem;
+          color: #4b5563;
         }
 
         .auth-buttons {
@@ -179,8 +187,17 @@ class AppHeader extends HTMLElement {
             font-size: 0.8125rem;
           }
 
+          .user-info {
+            padding: 0.5rem;
+            gap: 0;
+          }
+
           .user-email {
             display: none;
+          }
+
+          .user-icon {
+            display: block;
           }
         }
       </style>
@@ -217,11 +234,11 @@ class AppHeader extends HTMLElement {
    */
   renderAuthenticatedNav(user) {
     return `
-      <button class="nav-link" data-route="/todos" aria-label="View todos">
-        Todos
-      </button>
-      <div class="divider" aria-hidden="true"></div>
-      <div class="user-info">
+      <div class="user-info" title="${user.email}">
+        <svg class="user-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        </svg>
         <span class="user-email" aria-label="Logged in as ${user.email}">${user.email}</span>
       </div>
       <logout-button variant="secondary"></logout-button>
