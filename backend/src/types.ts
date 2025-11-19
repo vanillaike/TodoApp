@@ -15,6 +15,8 @@ interface Todo {
   title: string;
   description?: string;
   completed: number;
+  category_id?: number | null;
+  user_id?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -24,6 +26,19 @@ interface User {
   id?: number;
   email: string;
   password_hash?: string; // Optional because we never return this in API responses
+  created_at?: string;
+  updated_at?: string;
+}
+
+// Category database record interface
+interface Category {
+  id?: number;
+  name: string;
+  color: string;
+  icon: string;
+  user_id?: number | null;
+  is_system: number;
+  sort_order: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -69,5 +84,12 @@ export interface ValidationResult<T = any> {
   data?: T;
 }
 
-// Export Todo and User interfaces for use throughout the app
-export type { Todo, User };
+// Category input for create/update operations
+export interface CategoryInput {
+  name: string;
+  color: string;
+  icon: string;
+}
+
+// Export Todo, User, and Category interfaces for use throughout the app
+export type { Todo, User, Category };

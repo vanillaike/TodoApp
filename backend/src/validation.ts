@@ -7,7 +7,8 @@ import { CONFIG } from './config';
 import type {
   ValidationResult,
   AuthenticateRequest,
-  PasswordValidation
+  PasswordValidation,
+  CategoryInput
 } from './types';
 
 /**
@@ -294,7 +295,7 @@ export function validateRefreshInput(body: any): ValidationResult<{ refreshToken
 
 /**
  * Comprehensive validation for todo input
- * Validates title and description with length limits and type checking
+ * Validates title, description, completed, and category_id with length limits and type checking
  * @param body - Request body to validate
  * @param isUpdate - Whether this is an update (makes title optional)
  * @returns ValidationResult with validated data or error message
@@ -303,6 +304,7 @@ export function validateTodoInput(body: any, isUpdate: boolean = false): Validat
   title?: string;
   description?: string | null;
   completed?: number;
+  category_id?: number | null;
 }> {
   // Check body is a valid object (not array, null, etc.)
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -310,13 +312,13 @@ export function validateTodoInput(body: any, isUpdate: boolean = false): Validat
   }
 
   // Check for unknown fields (security: reject extra fields)
-  const allowedFields = ['title', 'description', 'completed'];
+  const allowedFields = ['title', 'description', 'completed', 'category_id'];
   const providedFields = Object.keys(body);
   const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
   if (unknownFields.length > 0) {
     return {
       valid: false,
-      error: `Unknown fields: ${unknownFields.join(', ')}. Only title, description, and completed are allowed.`
+      error: `Unknown fields: ${unknownFields.join(', ')}. Only title, description, completed, and category_id are allowed.`
     };
   }
 
@@ -370,6 +372,134 @@ export function validateTodoInput(body: any, isUpdate: boolean = false): Validat
     } else {
       return { valid: false, error: 'Completed must be a boolean or 0/1' };
     }
+  }
+
+  // Validate category_id (optional)
+  if (body.category_id !== undefined) {
+    // Accept integer or null
+    if (body.category_id === null) {
+      validated.category_id = null;
+    } else if (typeof body.category_id === 'number') {
+      // Check if it's an integer
+      if (!Number.isInteger(body.category_id)) {
+        return { valid: false, error: 'Category ID must be an integer' };
+      }
+      // Check if it's positive
+      if (body.category_id < 1) {
+        return { valid: false, error: 'Category ID must be a positive integer' };
+      }
+      validated.category_id = body.category_id;
+    } else {
+      return { valid: false, error: 'Category ID must be an integer or null' };
+    }
+  }
+
+  return { valid: true, data: validated };
+}
+
+/**
+ * Comprehensive validation for category input
+ * Validates name, color (hex format), and icon (emoji)
+ * @param body - Request body to validate
+ * @param isUpdate - Whether this is an update (makes all fields optional)
+ * @returns ValidationResult with validated data or error message
+ */
+export function validateCategoryInput(
+  body: any,
+  isUpdate: boolean = false
+): ValidationResult<Partial<CategoryInput>> {
+  // Check body is a valid object (not array, null, etc.)
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { valid: false, error: 'Request body must be a JSON object' };
+  }
+
+  // Check for unknown fields (security: reject extra fields)
+  const allowedFields = ['name', 'color', 'icon'];
+  const providedFields = Object.keys(body);
+  const unknownFields = providedFields.filter(f => !allowedFields.includes(f));
+  if (unknownFields.length > 0) {
+    return {
+      valid: false,
+      error: `Unknown fields: ${unknownFields.join(', ')}. Only name, color, and icon are allowed.`
+    };
+  }
+
+  const validated: Partial<CategoryInput> = {};
+
+  // Validate name (required for create, optional for update)
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string') {
+      return { valid: false, error: 'Name must be a string' };
+    }
+
+    const name = body.name.trim();
+
+    if (name.length === 0) {
+      return { valid: false, error: 'Name cannot be empty' };
+    }
+
+    // Enforce minimum and maximum length
+    if (name.length < CONFIG.CATEGORY_NAME_MIN_LENGTH) {
+      return { valid: false, error: `Name must be at least ${CONFIG.CATEGORY_NAME_MIN_LENGTH} character long` };
+    }
+
+    if (name.length > CONFIG.CATEGORY_NAME_MAX_LENGTH) {
+      return { valid: false, error: `Name must be ${CONFIG.CATEGORY_NAME_MAX_LENGTH} characters or less` };
+    }
+
+    validated.name = name;
+  } else if (!isUpdate) {
+    return { valid: false, error: 'Name is required' };
+  }
+
+  // Validate color (required for create, optional for update)
+  if (body.color !== undefined) {
+    if (typeof body.color !== 'string') {
+      return { valid: false, error: 'Color must be a string' };
+    }
+
+    const color = body.color.trim();
+
+    // Validate hex color format: #RRGGBB
+    const hexColorRegex = /^#[0-9A-Fa-f]{6}$/;
+    if (!hexColorRegex.test(color)) {
+      return { valid: false, error: 'Color must be a valid hex color in format #RRGGBB (e.g., #3B82F6)' };
+    }
+
+    validated.color = color.toUpperCase(); // Normalize to uppercase
+  } else if (!isUpdate) {
+    return { valid: false, error: 'Color is required' };
+  }
+
+  // Validate icon (required for create, optional for update)
+  if (body.icon !== undefined) {
+    if (typeof body.icon !== 'string') {
+      return { valid: false, error: 'Icon must be a string' };
+    }
+
+    const icon = body.icon.trim();
+
+    if (icon.length === 0) {
+      return { valid: false, error: 'Icon cannot be empty' };
+    }
+
+    // Basic emoji validation: check if it's a single character or a valid emoji sequence
+    // Emojis can be 1-4 characters in length due to Unicode combining characters
+    // We'll use a simple length check and allow 1-10 characters to accommodate various emoji formats
+    if (icon.length > 10) {
+      return { valid: false, error: 'Icon must be a single emoji character' };
+    }
+
+    // Additional check: ensure it contains at least one emoji-like character
+    // This is a simple heuristic - we check for high Unicode values or specific emoji ranges
+    const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{1F100}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2300}-\u{23FF}\u{2B50}\u{2B55}\u{231A}\u{231B}\u{2328}\u{23CF}\u{23E9}-\u{23F3}\u{23F8}-\u{23FA}]/u;
+    if (!emojiRegex.test(icon)) {
+      return { valid: false, error: 'Icon must be a valid emoji character' };
+    }
+
+    validated.icon = icon;
+  } else if (!isUpdate) {
+    return { valid: false, error: 'Icon is required' };
   }
 
   return { valid: true, data: validated };

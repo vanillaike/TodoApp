@@ -28,19 +28,28 @@ class AuthState {
     const hasValidToken = tokenStorage.hasValidAccessToken();
 
     if (hasValidToken) {
-      // Get user data from token or localStorage
+      // Get user data from JWT token
       const accessToken = tokenStorage.getAccessToken();
       let user = getUserFromToken(accessToken);
 
-      // Fallback to stored user data if token decode fails
+      // If JWT decode fails, try to reconstruct from email
       if (!user) {
-        user = tokenStorage.getUserData();
+        const email = tokenStorage.getUserEmail();
+        if (email) {
+          // We have email but can't get userId - still allow login
+          // userId will be available when token is refreshed
+          user = { email };
+        }
       }
 
       if (user) {
         this.isAuthenticated = true;
         this.currentUser = user;
-        console.log('Auth state initialized: logged in as', user.email);
+
+        // Migrate old user data to new format (one-time migration)
+        if (user.email && !tokenStorage.getUserEmail()) {
+          tokenStorage.saveUserEmail(user.email);
+        }
       } else {
         // Token exists but invalid, clear everything
         this.clearState();
@@ -61,8 +70,10 @@ class AuthState {
     // Save tokens to localStorage
     tokenStorage.saveTokens(accessToken, refreshToken);
 
-    // Save user data
-    tokenStorage.saveUserData(user);
+    // Only save email to localStorage (userId is in JWT)
+    if (user && user.email) {
+      tokenStorage.saveUserEmail(user.email);
+    }
 
     // Update state
     this.isAuthenticated = true;
@@ -70,8 +81,6 @@ class AuthState {
 
     // Notify listeners
     this.notifyListeners();
-
-    console.log('User logged in:', user.email);
   }
 
   /**
@@ -85,8 +94,6 @@ class AuthState {
 
       // Call logout API (optional refresh token)
       await apiLogout(refreshToken);
-
-      console.log('Logout API call successful');
     } catch (error) {
       console.error('Logout API call failed:', error);
       // Continue with local logout even if API fails
@@ -94,7 +101,6 @@ class AuthState {
       // Clear local state regardless of API result
       this.clearState();
       this.notifyListeners();
-      console.log('User logged out');
     }
   }
 
@@ -110,10 +116,11 @@ class AuthState {
     const user = getUserFromToken(accessToken);
     if (user) {
       this.currentUser = user;
-      tokenStorage.saveUserData(user);
+      // Only save email to localStorage
+      if (user.email) {
+        tokenStorage.saveUserEmail(user.email);
+      }
     }
-
-    console.log('Tokens updated');
   }
 
   /**
@@ -141,10 +148,35 @@ class AuthState {
 
   /**
    * Get current user object
+   * Reconstructs from JWT token and stored email if needed
    * @returns {object|null} Current user or null if not authenticated
    */
   getCurrentUser() {
-    return this.currentUser;
+    // If we have current user in memory, return it
+    if (this.currentUser) {
+      return this.currentUser;
+    }
+
+    // Try to reconstruct from token and email
+    if (this.isAuthenticated) {
+      const accessToken = tokenStorage.getAccessToken();
+      if (accessToken) {
+        const user = getUserFromToken(accessToken);
+        if (user) {
+          this.currentUser = user;
+          return user;
+        }
+      }
+
+      // Fallback: construct from email only
+      const email = tokenStorage.getUserEmail();
+      if (email) {
+        this.currentUser = { email };
+        return this.currentUser;
+      }
+    }
+
+    return null;
   }
 
   /**

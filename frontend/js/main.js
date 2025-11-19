@@ -21,6 +21,11 @@ import './components/todo-list.js';
 import './components/todo-form.js';
 import './components/protected-route.js';
 import './components/todo-page.js';
+import './components/category-badge.js';
+import './components/category-selector.js';
+import './components/color-picker.js';
+import './components/emoji-picker.js';
+import './components/category-manager.js';
 
 /**
  * Global error handler for uncaught errors

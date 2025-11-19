@@ -7,6 +7,7 @@
 
 import './todo-form.js';
 import './todo-list.js';
+import './category-manager.js';
 
 /**
  * Todo Page Component
@@ -43,6 +44,35 @@ class TodoPage extends HTMLElement {
    */
   handleTodoCreateError(e) {
     console.error('Todo create error:', e.detail.message);
+  }
+
+  /**
+   * Handle manage categories button click
+   * Opens the category manager modal
+   */
+  handleManageCategories() {
+    const manager = document.createElement('category-manager');
+    document.body.appendChild(manager);
+
+    manager.addEventListener('close', () => {
+      manager.remove();
+    });
+
+    manager.addEventListener('categories-updated', () => {
+      // Refresh todos to get updated category data
+      this.refreshTodos();
+    });
+  }
+
+  /**
+   * Refresh the todo list and categories
+   */
+  refreshTodos() {
+    const todoList = this.querySelector('todo-list');
+    if (todoList) {
+      todoList.fetchCategories(); // Refresh categories sidebar
+      todoList.fetchTodos();
+    }
   }
 
   /**
@@ -85,6 +115,12 @@ class TodoPage extends HTMLElement {
         </div>
       </div>
     `;
+
+    // Listen for manage-categories events from todo-list
+    const todoList = this.querySelector('todo-list');
+    if (todoList) {
+      todoList.addEventListener('manage-categories', () => this.handleManageCategories());
+    }
   }
 }
 

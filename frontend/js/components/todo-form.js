@@ -8,6 +8,7 @@
 import { createTodo } from '../services/todo-api.js';
 import { validateTodoTitle, validateTodoDescription } from '../utils/validators.js';
 import { CONFIG } from '../config.js';
+import './category-selector.js';
 
 /**
  * Todo Form Component
@@ -26,6 +27,9 @@ class TodoForm extends HTMLElement {
 
     /** @type {boolean} */
     this.isSubmitting = false;
+
+    /** @type {number|null} */
+    this.selectedCategoryId = null;
 
     /** @type {Object} */
     this.errors = {
@@ -141,7 +145,7 @@ class TodoForm extends HTMLElement {
     this.render();
 
     try {
-      const response = await createTodo(title, description || '');
+      const response = await createTodo(title, description || '', this.selectedCategoryId);
 
       // Check if creation was successful
       if (!response.success) {
@@ -191,6 +195,13 @@ class TodoForm extends HTMLElement {
       title: null,
       description: null
     };
+    this.selectedCategoryId = null;
+
+    // Reset category selector
+    const selector = this.shadowRoot.querySelector('#category-selector');
+    if (selector) {
+      selector.setAttribute('selected-id', '');
+    }
   }
 
   /**
@@ -663,6 +674,14 @@ class TodoForm extends HTMLElement {
                   Max ${CONFIG.VALIDATION.TODO_DESCRIPTION_MAX_LENGTH} characters
                 </p>
               </div>
+
+              <!-- Category Field -->
+              <div class="form-group">
+                <label class="label" for="category-selector">
+                  Category <span style="color: #6b7280;">(optional)</span>
+                </label>
+                <category-selector id="category-selector"></category-selector>
+              </div>
             </form>
           </div>
 
@@ -704,6 +723,14 @@ class TodoForm extends HTMLElement {
   }
 
   /**
+   * Handle category selected
+   * @param {CustomEvent} event - Category selected event
+   */
+  handleCategorySelected(event) {
+    this.selectedCategoryId = event.detail.categoryId;
+  }
+
+  /**
    * Attach event listeners
    */
   attachEventListeners() {
@@ -739,6 +766,12 @@ class TodoForm extends HTMLElement {
         e.preventDefault();
         this.handleSubmit({ target: form, preventDefault: () => {} });
       });
+    }
+
+    // Category selector
+    const categorySelector = this.shadowRoot.querySelector('#category-selector');
+    if (categorySelector) {
+      categorySelector.addEventListener('category-selected', (e) => this.handleCategorySelected(e));
     }
   }
 }

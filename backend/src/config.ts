@@ -17,6 +17,8 @@ export const CONFIG = {
   PASSWORD_MAX_LENGTH: 128 as number, // Maximum password length to prevent DoS via bcrypt
   TITLE_MAX_LENGTH: 200 as number, // Maximum todo title length
   DESCRIPTION_MAX_LENGTH: 2000 as number, // Maximum todo description length
+  CATEGORY_NAME_MIN_LENGTH: 1 as number, // Minimum category name length
+  CATEGORY_NAME_MAX_LENGTH: 50 as number, // Maximum category name length
 
   // Pagination
   DEFAULT_PAGE_SIZE: 50 as number, // Default number of items per page

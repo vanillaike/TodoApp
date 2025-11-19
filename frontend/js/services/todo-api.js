@@ -51,10 +51,6 @@ export async function getTodos(limit = CONFIG.PAGINATION.DEFAULT_PAGE_SIZE, offs
             };
         }
 
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Fetched ${data.todos.length} todos (limit: ${limit}, offset: ${offset})`);
-        }
-
         return {
             success: true,
             data: {
@@ -112,10 +108,6 @@ export async function getTodo(id) {
             };
         }
 
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Fetched todo #${todoId}`);
-        }
-
         return {
             success: true,
             data: data
@@ -135,9 +127,10 @@ export async function getTodo(id) {
  * Create a new todo
  * @param {string} title - Todo title (required, 1-200 characters)
  * @param {string} description - Todo description (optional, max 1000 characters)
+ * @param {number|null} categoryId - Category ID (optional)
  * @returns {Promise<Object>} Response object with { success, data: todo, error? }
  */
-export async function createTodo(title, description = '') {
+export async function createTodo(title, description = '', categoryId = null) {
     try {
         // Validate title
         if (!title || typeof title !== 'string') {
@@ -174,6 +167,17 @@ export async function createTodo(title, description = '') {
             }
         }
 
+        // Validate categoryId
+        if (categoryId !== null) {
+            const parsedCategoryId = typeof categoryId === 'string' ? parseInt(categoryId, 10) : categoryId;
+            if (typeof categoryId !== 'number' || isNaN(parsedCategoryId) || parsedCategoryId < 1) {
+                return {
+                    success: false,
+                    error: 'Invalid category ID.'
+                };
+            }
+        }
+
         // Prepare request body
         const todoData = {
             title: trimmedTitle,
@@ -182,6 +186,10 @@ export async function createTodo(title, description = '') {
 
         if (trimmedDescription) {
             todoData.description = trimmedDescription;
+        }
+
+        if (categoryId !== null) {
+            todoData.category_id = categoryId;
         }
 
         // Make authenticated API request
@@ -198,10 +206,6 @@ export async function createTodo(title, description = '') {
                 success: false,
                 error: 'Invalid response from server.'
             };
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Created todo #${data.id}: ${data.title}`);
         }
 
         return {
@@ -222,7 +226,7 @@ export async function createTodo(title, description = '') {
 /**
  * Update an existing todo
  * @param {number|string} id - Todo ID
- * @param {Object} updates - Object with fields to update { title?, description?, completed? }
+ * @param {Object} updates - Object with fields to update { title?, description?, completed?, category_id? }
  * @returns {Promise<Object>} Response object with { success, data: todo, error? }
  */
 export async function updateTodo(id, updates) {
@@ -313,6 +317,34 @@ export async function updateTodo(id, updates) {
             }
         }
 
+        if (updates.hasOwnProperty('category_id')) {
+            if (updates.category_id === null) {
+                updatePayload.category_id = null;
+            } else if (typeof updates.category_id === 'number') {
+                if (updates.category_id < 1) {
+                    return {
+                        success: false,
+                        error: 'Invalid category ID.'
+                    };
+                }
+                updatePayload.category_id = updates.category_id;
+            } else if (typeof updates.category_id === 'string') {
+                const parsedCategoryId = parseInt(updates.category_id, 10);
+                if (isNaN(parsedCategoryId) || parsedCategoryId < 1) {
+                    return {
+                        success: false,
+                        error: 'Invalid category ID.'
+                    };
+                }
+                updatePayload.category_id = parsedCategoryId;
+            } else {
+                return {
+                    success: false,
+                    error: 'Category ID must be a number or null.'
+                };
+            }
+        }
+
         // Check if there are any valid updates
         if (Object.keys(updatePayload).length === 0) {
             return {
@@ -335,10 +367,6 @@ export async function updateTodo(id, updates) {
                 success: false,
                 error: 'Invalid response from server.'
             };
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Updated todo #${todoId}`);
         }
 
         return {
@@ -384,10 +412,6 @@ export async function deleteTodo(id) {
 
         if (!response.success) {
             return response;
-        }
-
-        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-            console.log(`Deleted todo #${todoId}`);
         }
 
         return {
@@ -519,6 +543,85 @@ export async function getActiveTodos(limit = CONFIG.PAGINATION.MAX_PAGE_SIZE) {
         return {
             success: false,
             error: 'Failed to fetch active todos. Please try again.'
+        };
+    }
+}
+
+/**
+ * Get paginated list of todos filtered by category
+ * @param {number|string} categoryId - Category ID to filter by
+ * @param {number} limit - Number of todos to fetch (max 100)
+ * @param {number} offset - Number of todos to skip (for pagination)
+ * @returns {Promise<Object>} Response object with { success, data: { todos, pagination }, error? }
+ */
+export async function getTodosByCategory(categoryId, limit = CONFIG.PAGINATION.DEFAULT_PAGE_SIZE, offset = 0) {
+    try {
+        // Validate categoryId
+        if (!categoryId || (typeof categoryId !== 'number' && typeof categoryId !== 'string')) {
+            return {
+                success: false,
+                error: 'Valid category ID is required.'
+            };
+        }
+
+        const parsedCategoryId = typeof categoryId === 'string' ? parseInt(categoryId, 10) : categoryId;
+        if (isNaN(parsedCategoryId) || parsedCategoryId < 1) {
+            return {
+                success: false,
+                error: 'Invalid category ID.'
+            };
+        }
+
+        // Validate parameters
+        if (typeof limit !== 'number' || limit < 1) {
+            limit = CONFIG.PAGINATION.DEFAULT_PAGE_SIZE;
+        }
+
+        if (limit > CONFIG.PAGINATION.MAX_PAGE_SIZE) {
+            limit = CONFIG.PAGINATION.MAX_PAGE_SIZE;
+        }
+
+        if (typeof offset !== 'number' || offset < 0) {
+            offset = 0;
+        }
+
+        // Build query string
+        const queryParams = new URLSearchParams({
+            category_id: parsedCategoryId.toString(),
+            limit: limit.toString(),
+            offset: offset.toString()
+        });
+
+        // Make authenticated API request
+        const response = await apiClient.get(`/todos?${queryParams.toString()}`, true);
+
+        if (!response.success) {
+            return response;
+        }
+
+        // Validate response structure
+        const { data } = response;
+        if (!data || !Array.isArray(data.todos) || !data.pagination) {
+            return {
+                success: false,
+                error: 'Invalid response from server.'
+            };
+        }
+
+        return {
+            success: true,
+            data: {
+                todos: data.todos,
+                pagination: data.pagination
+            }
+        };
+    } catch (error) {
+        if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
+            console.error('Get todos by category error:', error);
+        }
+        return {
+            success: false,
+            error: 'Failed to fetch todos by category. Please try again.'
         };
     }
 }
