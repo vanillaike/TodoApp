@@ -8,6 +8,7 @@ import type {
   Env,
   Todo,
   User,
+  Category,
   AuthenticateResponse
 } from './types';
 import {
@@ -27,7 +28,8 @@ import {
   validateLoginInput,
   validateLogoutInput,
   validateRefreshInput,
-  validateTodoInput
+  validateTodoInput,
+  validateCategoryInput
 } from './validation';
 import {
   hashPassword,
@@ -37,6 +39,24 @@ import {
   authenticate
 } from './auth';
 import { getSecurityHeaders } from './middleware/headers';
+
+/**
+ * Verify that a category exists and is accessible to the user
+ * Categories are accessible if they are system categories (user_id IS NULL) OR owned by the user
+ * @param categoryId - The category ID to verify
+ * @param userId - The user ID making the request
+ * @param db - The D1 database instance
+ * @returns true if category is accessible, false otherwise
+ */
+async function verifyCategoryAccess(categoryId: number, userId: number, db: D1Database): Promise<boolean> {
+  const category = await db.prepare(
+    'SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)'
+  )
+    .bind(categoryId, userId)
+    .first();
+
+  return category !== null;
+}
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -85,7 +105,12 @@ export default {
         // Extract validated and normalized data
         const { email, password } = validation.data!;
 
-        // Check if email already exists
+        // SECURITY FIX: Hash password BEFORE checking email existence
+        // This prevents timing attacks that could enumerate valid email addresses
+        // Both code paths (existing/new email) now take similar time (~100-300ms for bcrypt)
+        const passwordHash = await hashPassword(password);
+
+        // Check if email already exists AFTER hashing
         const existingUser = await env.todo_db.prepare(
           'SELECT id FROM users WHERE email = ?'
         )
@@ -95,9 +120,6 @@ export default {
         if (existingUser) {
           return errorResponse('Email already exists', 409, headers);
         }
-
-        // Hash password
-        const passwordHash = await hashPassword(password);
 
         // Insert user into database
         const userResult = await env.todo_db.prepare(
@@ -425,7 +447,7 @@ export default {
       // TODO ROUTES (All protected by JWT authentication)
       // ========================================================================
 
-      // GET /todos - List todos for authenticated user with pagination
+      // GET /todos - List todos for authenticated user with pagination and optional category filtering
       if (path === '/todos' && method === 'GET') {
         const headers = getSecurityHeaders(request, env);
 
@@ -440,6 +462,7 @@ export default {
         const url = new URL(request.url);
         const limitParam = url.searchParams.get('limit');
         const offsetParam = url.searchParams.get('offset');
+        const categoryIdParam = url.searchParams.get('category_id');
 
         // Default pagination values
         let limit = CONFIG.DEFAULT_PAGE_SIZE;
@@ -476,21 +499,87 @@ export default {
           offset = parsedOffset;
         }
 
-        // Query todos with pagination (filtered by user_id for user isolation)
-        const { results } = await env.todo_db.prepare(
-          'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
-        ).bind(user.userId, limit, offset).all<Todo>();
+        // Build query with LEFT JOIN to include category data
+        let query = `
+          SELECT
+            todos.id,
+            todos.title,
+            todos.description,
+            todos.completed,
+            todos.category_id,
+            todos.user_id,
+            todos.created_at,
+            todos.updated_at,
+            categories.id as category__id,
+            categories.name as category__name,
+            categories.color as category__color,
+            categories.icon as category__icon
+          FROM todos
+          LEFT JOIN categories ON todos.category_id = categories.id
+          WHERE todos.user_id = ?
+        `;
+        const queryParams: any[] = [user.userId];
+
+        // Add category filter if provided
+        if (categoryIdParam) {
+          const categoryId = parseInt(categoryIdParam);
+          if (isNaN(categoryId) || categoryId < 1) {
+            return new Response(JSON.stringify({
+              error: 'Invalid category_id parameter',
+              message: 'Category ID must be a positive integer'
+            }), {
+              status: 400,
+              headers
+            });
+          }
+          query += ' AND todos.category_id = ?';
+          queryParams.push(categoryId);
+        }
+
+        query += ' ORDER BY todos.created_at DESC LIMIT ? OFFSET ?';
+        queryParams.push(limit, offset);
+
+        // Query todos with pagination and JOIN (filtered by user_id for user isolation)
+        const { results } = await env.todo_db.prepare(query).bind(...queryParams).all();
+
+        // Transform results to include nested category object
+        const todos = results.map((row: any) => ({
+          id: row.id,
+          title: row.title,
+          description: row.description,
+          completed: row.completed,
+          category_id: row.category_id,
+          category: row.category__id ? {
+            id: row.category__id,
+            name: row.category__name,
+            color: row.category__color,
+            icon: row.category__icon
+          } : null,
+          user_id: row.user_id,
+          created_at: row.created_at,
+          updated_at: row.updated_at
+        }));
+
+        // Build count query with category filter if applicable
+        let countQuery = 'SELECT COUNT(*) as total FROM todos WHERE user_id = ?';
+        const countParams: any[] = [user.userId];
+
+        if (categoryIdParam) {
+          const categoryId = parseInt(categoryIdParam);
+          countQuery += ' AND category_id = ?';
+          countParams.push(categoryId);
+        }
 
         // Get total count for pagination metadata
-        const countResult = await env.todo_db.prepare(
-          'SELECT COUNT(*) as total FROM todos WHERE user_id = ?'
-        ).bind(user.userId).first() as { total: number } | null;
+        const countResult = await env.todo_db.prepare(countQuery)
+          .bind(...countParams)
+          .first() as { total: number } | null;
 
         const total = countResult?.total || 0;
 
         // Return paginated response with metadata
         return successResponse({
-          todos: results,
+          todos,
           pagination: {
             limit,
             offset,
@@ -537,22 +626,66 @@ export default {
 
         const validatedData = validation.data!;
 
+        // Validate category access if category_id is provided
+        if (validatedData.category_id !== undefined && validatedData.category_id !== null) {
+          const hasAccess = await verifyCategoryAccess(validatedData.category_id, user.userId, env.todo_db);
+          if (!hasAccess) {
+            return errorResponse('Category not found or access denied', 400, headers);
+          }
+        }
+
         // Insert todo with validated data and user_id
         const result = await env.todo_db.prepare(
-          'INSERT INTO todos (title, description, completed, user_id) VALUES (?, ?, ?, ?)'
+          'INSERT INTO todos (title, description, completed, category_id, user_id) VALUES (?, ?, ?, ?, ?)'
         )
           .bind(
             validatedData.title,
             validatedData.description !== undefined ? validatedData.description : null,
             validatedData.completed !== undefined ? validatedData.completed : 0,
+            validatedData.category_id !== undefined ? validatedData.category_id : null,
             user.userId
           )
           .run();
 
-        // Fetch the created todo
-        const todo = await env.todo_db.prepare('SELECT * FROM todos WHERE id = ?')
+        // Fetch the created todo with category data using LEFT JOIN
+        const todoRow = await env.todo_db.prepare(`
+          SELECT
+            todos.id,
+            todos.title,
+            todos.description,
+            todos.completed,
+            todos.category_id,
+            todos.user_id,
+            todos.created_at,
+            todos.updated_at,
+            categories.id as category__id,
+            categories.name as category__name,
+            categories.color as category__color,
+            categories.icon as category__icon
+          FROM todos
+          LEFT JOIN categories ON todos.category_id = categories.id
+          WHERE todos.id = ?
+        `)
           .bind(result.meta.last_row_id)
-          .first<Todo>();
+          .first();
+
+        // Transform result to include nested category object
+        const todo = todoRow ? {
+          id: (todoRow as any).id,
+          title: (todoRow as any).title,
+          description: (todoRow as any).description,
+          completed: (todoRow as any).completed,
+          category_id: (todoRow as any).category_id,
+          category: (todoRow as any).category__id ? {
+            id: (todoRow as any).category__id,
+            name: (todoRow as any).category__name,
+            color: (todoRow as any).category__color,
+            icon: (todoRow as any).category__icon
+          } : null,
+          user_id: (todoRow as any).user_id,
+          created_at: (todoRow as any).created_at,
+          updated_at: (todoRow as any).updated_at
+        } : null;
 
         return createdResponse(todo, headers);
       }
@@ -571,17 +704,50 @@ export default {
 
         const id = getTodoMatch[1];
 
-        // Query todo with both id and user_id to ensure user isolation
+        // Query todo with LEFT JOIN to include category data
         // Returns 404 if todo doesn't exist OR doesn't belong to user (don't reveal existence)
-        const todo = await env.todo_db.prepare(
-          'SELECT * FROM todos WHERE id = ? AND user_id = ?'
-        )
+        const todoRow = await env.todo_db.prepare(`
+          SELECT
+            todos.id,
+            todos.title,
+            todos.description,
+            todos.completed,
+            todos.category_id,
+            todos.user_id,
+            todos.created_at,
+            todos.updated_at,
+            categories.id as category__id,
+            categories.name as category__name,
+            categories.color as category__color,
+            categories.icon as category__icon
+          FROM todos
+          LEFT JOIN categories ON todos.category_id = categories.id
+          WHERE todos.id = ? AND todos.user_id = ?
+        `)
           .bind(id, user.userId)
-          .first<Todo>();
+          .first();
 
-        if (!todo) {
+        if (!todoRow) {
           return notFoundResponse('Todo not found', headers);
         }
+
+        // Transform result to include nested category object
+        const todo = {
+          id: (todoRow as any).id,
+          title: (todoRow as any).title,
+          description: (todoRow as any).description,
+          completed: (todoRow as any).completed,
+          category_id: (todoRow as any).category_id,
+          category: (todoRow as any).category__id ? {
+            id: (todoRow as any).category__id,
+            name: (todoRow as any).category__name,
+            color: (todoRow as any).category__color,
+            icon: (todoRow as any).category__icon
+          } : null,
+          user_id: (todoRow as any).user_id,
+          created_at: (todoRow as any).created_at,
+          updated_at: (todoRow as any).updated_at
+        };
 
         return successResponse(todo, headers);
       }
@@ -626,6 +792,14 @@ export default {
 
         const validatedData = validation.data!;
 
+        // Validate category access if category_id is provided and not null
+        if (validatedData.category_id !== undefined && validatedData.category_id !== null) {
+          const hasAccess = await verifyCategoryAccess(validatedData.category_id, user.userId, env.todo_db);
+          if (!hasAccess) {
+            return errorResponse('Category not found or access denied', 400, headers);
+          }
+        }
+
         // Check if todo exists AND belongs to user (user isolation)
         // Returns 404 if todo doesn't exist OR doesn't belong to user (don't reveal existence)
         const existing = await env.todo_db.prepare(
@@ -640,23 +814,57 @@ export default {
 
         // Update todo with validated data
         await env.todo_db.prepare(
-          'UPDATE todos SET title = ?, description = ?, completed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?'
+          'UPDATE todos SET title = ?, description = ?, completed = ?, category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?'
         )
           .bind(
             validatedData.title !== undefined ? validatedData.title : existing.title,
             validatedData.description !== undefined ? validatedData.description : existing.description,
             validatedData.completed !== undefined ? validatedData.completed : existing.completed,
+            validatedData.category_id !== undefined ? validatedData.category_id : existing.category_id,
             id,
             user.userId
           )
           .run();
 
-        // Fetch updated todo with user_id filter
-        const updated = await env.todo_db.prepare(
-          'SELECT * FROM todos WHERE id = ? AND user_id = ?'
-        )
+        // Fetch updated todo with LEFT JOIN to include category data
+        const todoRow = await env.todo_db.prepare(`
+          SELECT
+            todos.id,
+            todos.title,
+            todos.description,
+            todos.completed,
+            todos.category_id,
+            todos.user_id,
+            todos.created_at,
+            todos.updated_at,
+            categories.id as category__id,
+            categories.name as category__name,
+            categories.color as category__color,
+            categories.icon as category__icon
+          FROM todos
+          LEFT JOIN categories ON todos.category_id = categories.id
+          WHERE todos.id = ? AND todos.user_id = ?
+        `)
           .bind(id, user.userId)
-          .first<Todo>();
+          .first();
+
+        // Transform result to include nested category object
+        const updated = todoRow ? {
+          id: (todoRow as any).id,
+          title: (todoRow as any).title,
+          description: (todoRow as any).description,
+          completed: (todoRow as any).completed,
+          category_id: (todoRow as any).category_id,
+          category: (todoRow as any).category__id ? {
+            id: (todoRow as any).category__id,
+            name: (todoRow as any).category__name,
+            color: (todoRow as any).category__color,
+            icon: (todoRow as any).category__icon
+          } : null,
+          user_id: (todoRow as any).user_id,
+          created_at: (todoRow as any).created_at,
+          updated_at: (todoRow as any).updated_at
+        } : null;
 
         return successResponse(updated, headers);
       }
@@ -693,6 +901,306 @@ export default {
           .run();
 
         return successResponse({ message: 'Todo deleted successfully' }, headers);
+      }
+
+      // ========================================================================
+      // CATEGORY ROUTES (All protected by JWT authentication)
+      // ========================================================================
+
+      // GET /categories - List categories for authenticated user (system + user categories)
+      if (path === '/categories' && method === 'GET') {
+        const headers = getSecurityHeaders(request, env);
+
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
+        // Query: system categories (user_id IS NULL) + user's custom categories
+        // Ordered by: system categories first, then by sort_order, then by name
+        const { results } = await env.todo_db.prepare(
+          'SELECT * FROM categories WHERE user_id IS NULL OR user_id = ? ORDER BY is_system DESC, sort_order ASC, name ASC'
+        ).bind(user.userId).all<Category>();
+
+        return successResponse({ categories: results }, headers);
+      }
+
+      // POST /categories - Create a new category for authenticated user
+      if (path === '/categories' && method === 'POST') {
+        const headers = getSecurityHeaders(request, env);
+
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
+        // Validate Content-Type header
+        if (!validateContentType(request)) {
+          return unsupportedMediaTypeResponse(headers);
+        }
+
+        // Check request size
+        if (!checkRequestSize(request)) {
+          return payloadTooLargeResponse(headers);
+        }
+
+        // Parse request body
+        let body: any;
+        try {
+          body = await request.json();
+        } catch (error) {
+          return invalidJsonResponse(headers);
+        }
+
+        // Comprehensive input validation
+        const validation = validateCategoryInput(body, false);
+        if (!validation.valid) {
+          return validationErrorResponse(validation.error!, headers);
+        }
+
+        const validatedData = validation.data!;
+
+        // Insert category with validated data and user_id
+        // is_system = 0 for user categories, sort_order = 0 by default
+        const result = await env.todo_db.prepare(
+          'INSERT INTO categories (name, color, icon, user_id, is_system, sort_order) VALUES (?, ?, ?, ?, 0, 0)'
+        )
+          .bind(
+            validatedData.name,
+            validatedData.color,
+            validatedData.icon,
+            user.userId
+          )
+          .run();
+
+        // Fetch the created category
+        const category = await env.todo_db.prepare('SELECT * FROM categories WHERE id = ?')
+          .bind(result.meta.last_row_id)
+          .first<Category>();
+
+        return createdResponse(category, headers);
+      }
+
+      // PUT /categories/:id - Update a category for authenticated user
+      const putCategoryMatch = path.match(/^\/categories\/(\d+)$/);
+      if (putCategoryMatch && method === 'PUT') {
+        const headers = getSecurityHeaders(request, env);
+
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
+        const id = putCategoryMatch[1];
+
+        // Validate Content-Type header
+        if (!validateContentType(request)) {
+          return unsupportedMediaTypeResponse(headers);
+        }
+
+        // Check request size
+        if (!checkRequestSize(request)) {
+          return payloadTooLargeResponse(headers);
+        }
+
+        // Parse request body
+        let body: any;
+        try {
+          body = await request.json();
+        } catch (error) {
+          return invalidJsonResponse(headers);
+        }
+
+        // Comprehensive input validation (isUpdate = true, all fields optional)
+        const validation = validateCategoryInput(body, true);
+        if (!validation.valid) {
+          return validationErrorResponse(validation.error!, headers);
+        }
+
+        const validatedData = validation.data!;
+
+        // First check if category exists
+        const existing = await env.todo_db.prepare(
+          'SELECT * FROM categories WHERE id = ?'
+        )
+          .bind(id)
+          .first<Category>();
+
+        if (!existing) {
+          return notFoundResponse('Not Found', headers);
+        }
+
+        // Check if it's a system category (cannot be modified)
+        if (existing.is_system === 1) {
+          return errorResponse('Cannot modify system categories', 403, headers);
+        }
+
+        // Check user ownership (user isolation)
+        if (existing.user_id !== user.userId) {
+          return notFoundResponse('Not Found', headers);
+        }
+
+        // Build dynamic UPDATE query for partial updates
+        const updates: string[] = [];
+        const values: any[] = [];
+
+        if (validatedData.name !== undefined) {
+          updates.push('name = ?');
+          values.push(validatedData.name);
+        }
+
+        if (validatedData.color !== undefined) {
+          updates.push('color = ?');
+          values.push(validatedData.color);
+        }
+
+        if (validatedData.icon !== undefined) {
+          updates.push('icon = ?');
+          values.push(validatedData.icon);
+        }
+
+        // If no fields to update, return current category
+        if (updates.length === 0) {
+          return successResponse(existing, headers);
+        }
+
+        // Add ID and user_id to values array for WHERE clause
+        values.push(id, user.userId);
+
+        // Update category with user_id filter
+        await env.todo_db.prepare(
+          `UPDATE categories SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`
+        )
+          .bind(...values)
+          .run();
+
+        // Fetch updated category with user_id filter
+        const updated = await env.todo_db.prepare(
+          'SELECT * FROM categories WHERE id = ? AND user_id = ?'
+        )
+          .bind(id, user.userId)
+          .first<Category>();
+
+        return successResponse(updated, headers);
+      }
+
+      // DELETE /categories/:id - Delete a category for authenticated user
+      const deleteCategoryMatch = path.match(/^\/categories\/(\d+)$/);
+      if (deleteCategoryMatch && method === 'DELETE') {
+        const headers = getSecurityHeaders(request, env);
+
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
+        const id = deleteCategoryMatch[1];
+
+        // First check if category exists
+        const existing = await env.todo_db.prepare(
+          'SELECT * FROM categories WHERE id = ?'
+        )
+          .bind(id)
+          .first<Category>();
+
+        if (!existing) {
+          return notFoundResponse('Not Found', headers);
+        }
+
+        // Check if it's a system category (cannot be deleted)
+        if (existing.is_system === 1) {
+          return errorResponse('Cannot delete system categories', 403, headers);
+        }
+
+        // Check user ownership (user isolation)
+        if (existing.user_id !== user.userId) {
+          return notFoundResponse('Not Found', headers);
+        }
+
+        // Unassign todos from this category (set category_id to NULL)
+        await env.todo_db.prepare(
+          'UPDATE todos SET category_id = NULL WHERE category_id = ? AND user_id = ?'
+        )
+          .bind(id, user.userId)
+          .run();
+
+        // Delete category with user_id filter to ensure user isolation
+        await env.todo_db.prepare('DELETE FROM categories WHERE id = ? AND user_id = ?')
+          .bind(id, user.userId)
+          .run();
+
+        return successResponse({ message: 'Category deleted successfully' }, headers);
+      }
+
+      // GET /categories/stats - Get todo counts per category for authenticated user
+      if (path === '/categories/stats' && method === 'GET') {
+        const headers = getSecurityHeaders(request, env);
+
+        // Authenticate user - verify JWT token
+        const authResult = await authenticate(request, env);
+        if (authResult instanceof Response) {
+          return authResult; // Return 401 error response
+        }
+        const user = authResult; // Extract authenticated user info
+
+        // Query category stats: count todos and completed todos per category
+        // Includes both system categories and user's custom categories
+        // Uses LEFT JOIN to include categories with zero todos
+        const { results: categoryStats } = await env.todo_db.prepare(`
+          SELECT
+            c.id,
+            c.name,
+            c.color,
+            c.icon,
+            c.is_system,
+            c.sort_order,
+            COUNT(t.id) as todo_count,
+            SUM(CASE WHEN t.completed = 1 THEN 1 ELSE 0 END) as completed_count
+          FROM categories c
+          LEFT JOIN todos t ON t.category_id = c.id AND t.user_id = ?
+          WHERE c.user_id IS NULL OR c.user_id = ?
+          GROUP BY c.id
+          ORDER BY c.is_system DESC, c.sort_order ASC, c.name ASC
+        `).bind(user.userId, user.userId).all();
+
+        // Query uncategorized todos count (category_id IS NULL)
+        const uncategorizedResult = await env.todo_db.prepare(`
+          SELECT
+            COUNT(*) as todo_count,
+            SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) as completed_count
+          FROM todos
+          WHERE user_id = ? AND category_id IS NULL
+        `).bind(user.userId).first() as { todo_count: number; completed_count: number | null } | null;
+
+        // Transform results to ensure proper number types and handle nulls
+        const stats = categoryStats.map((row: any) => ({
+          id: row.id,
+          name: row.name,
+          color: row.color,
+          icon: row.icon,
+          is_system: row.is_system,
+          sort_order: row.sort_order,
+          todo_count: row.todo_count || 0,
+          completed_count: row.completed_count || 0
+        }));
+
+        const uncategorized = {
+          todo_count: uncategorizedResult?.todo_count || 0,
+          completed_count: uncategorizedResult?.completed_count || 0
+        };
+
+        return successResponse({
+          stats,
+          uncategorized
+        }, headers);
       }
 
       return notFoundResponse('Not Found', getSecurityHeaders(request, env));

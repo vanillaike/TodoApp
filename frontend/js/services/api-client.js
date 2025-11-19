@@ -126,9 +126,6 @@ class ApiClient {
                 const data = await response.json();
                 if (data.accessToken && data.refreshToken) {
                     this.saveTokens(data.accessToken, data.refreshToken);
-                    if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-                        console.log('Token refresh successful');
-                    }
                     return true;
                 }
 
@@ -214,10 +211,6 @@ class ApiClient {
                 headers,
                 signal: controller.signal
             };
-
-            if (CONFIG.ENVIRONMENT.IS_DEVELOPMENT) {
-                console.log(`API ${options.method || 'GET'}: ${endpoint}`);
-            }
 
             const response = await fetch(url, fetchOptions);
 
